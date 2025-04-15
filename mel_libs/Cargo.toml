@@ -5,6 +5,10 @@ edition = "2021"
 description = "Shared libraries for MEL"
 license = "GPL-3.0-only"
 repository = "https://github.com/Offline-Program/MEL"
+authors = [
+    "Michael Clayton <mclayton@redhat.com>",
+    "Jared Sprague <jsprague@redhat.com>",
+]
 
 [dependencies]
 sha2 = "0.10.8"
