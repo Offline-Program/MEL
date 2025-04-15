@@ -4,7 +4,6 @@ version = "0.1.0"
 edition = "2021"
 description = "Shared libraries for MEL"
 license = "GPLv3"
-license-file = "LICENSE"
 repository = "https://github.com/Offline-Program/MEL"
 
 [dependencies]
