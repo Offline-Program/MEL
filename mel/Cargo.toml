@@ -1,0 +1,16 @@
+[package]
+name = "mimir_mel"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "mel"
+path = "src/main.rs"
+
+[dependencies]
+mel_libs = { path = "../mel_libs/" }
+tar = "0.4.41"
+flate2 = "1.0.33"
+
+[build-dependencies]
+mel_libs = { path = "../mel_libs/" }

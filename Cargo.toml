@@ -1,0 +1,15 @@
+[workspace]
+resolver = "2"
+members = ["./mel", "./mel_libs"]
+
+# profiles for MEL builds.  These exist so that a podman build-arg `MEL_PROFILE` can be
+# set to `debug` or `release`, then passed to `cargo build --profile ${MEL_PROFILE}`
+# _and_ used to copy the mel binary out of `target/${MEL_PROFILE}/mel`
+
+[profile.mel_release]
+inherits = "release"
+lto = "thin"
+strip = "symbols"
+
+[profile.mel_debug]
+inherits = "dev"

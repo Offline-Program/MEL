@@ -1,0 +1,5 @@
+# Ignore rust target directories
+target/
+
+# Don't check anything inside mel/vendor
+!mel/vendor/**

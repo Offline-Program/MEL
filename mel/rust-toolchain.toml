@@ -1,0 +1,3 @@
+[toolchain]
+# this should match the toolchain version available in ubi9
+channel = "1.79"
