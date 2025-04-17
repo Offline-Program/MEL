@@ -167,6 +167,38 @@ impl TokenMap {
     pub fn is_empty(&self) -> bool {
         self.token_map.is_empty()
     }
+
+    /// Check validity of the TokenMap.  Returns `Ok` if the TokenMap is valid, otherwise returns
+    /// `Err` containing information about the validity problem.
+    pub fn validate(&self) -> Result<(), InvalidTokenMap> {
+        use InvalidTokenMap::*;
+        const MIN_VALID_TOKEN_COUNT: usize = 8;
+
+        if self.is_empty() {
+            Err(Empty)
+        } else if self.len() < MIN_VALID_TOKEN_COUNT {
+            Err(Meager {
+                actual: self.len(),
+                expected_min: MIN_VALID_TOKEN_COUNT,
+            })
+        } else {
+            Ok(())
+        }
+    }
+}
+
+/// TokenMap validity problems.
+#[derive(Debug)]
+pub enum InvalidTokenMap {
+    /// TokenMap is empty.
+    Empty,
+    /// TokenMap has very few records and is probably incomplete.
+    Meager {
+        /// The actual number of tokens.
+        actual: usize,
+        /// The expected minimum number of tokens.
+        expected_min: usize,
+    },
 }
 
 // For converting the deserialized iterator into TokenMap.
