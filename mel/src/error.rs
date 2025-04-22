@@ -55,6 +55,10 @@ pub(crate) enum MelError {
     HttpdProcessFailed,
     /// User's access key's is cryptographically invalid (the hash component doesn't validate).
     AccessKeyInvalidBindHash,
+    /// The TokenMap file is empty.
+    MimirTokenMapEmpty,
+    /// The TokenMap file has very few records.
+    MimirTokenMapMeager,
 }
 
 impl From<&MelError> for &str {
@@ -75,6 +79,8 @@ impl From<&MelError> for &str {
             MelError::HttpdProcessFailed => "ERR_012: Failed to launch Apache httpd.",
             MelError::SolrUnpackFailed => "ERR_013: Failed to unpack the solr index archive.",
             MelError::AccessKeyInvalidBindHash => "ERR_014: Please provide a valid ACCESS_KEY.",
+            MelError::MimirTokenMapEmpty => "ERR_015: RHOKP image contains no token data; please contact Red Hat support.",
+            MelError::MimirTokenMapMeager => "ERR_016: RHOKP image contains very little token data; if your ACCESS_KEY is not accepted please contact Red Hat support.",
         }
     }
 }

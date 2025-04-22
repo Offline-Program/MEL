@@ -28,7 +28,7 @@ mod error;
 use error::MelError;
 use mel_libs::access_key::AccessKey;
 use mel_libs::crypt::{create_kek, dec, iv, AESParam};
-use mel_libs::token_map::TokenMap;
+use mel_libs::token_map::{InvalidTokenMap, TokenMap};
 use std::io;
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -135,6 +135,20 @@ fn decrypt_edek() -> Result<Dek, error::MelError> {
 
     let tm = TokenMap::load(Path::new(TOKENS_TSV_PATH))
         .map_err(|_| error::MelError::MimirTokenMapUnreadable)?;
+
+    // Check the validity of the TokenMap data.  If it's empty, error and bail out.  If it has only
+    // a few records, print a warning and continue.
+    if let Err(err) = tm.validate() {
+        match err {
+            InvalidTokenMap::Meager { .. } => {
+                debug_println!("MEL: TokenMap has very few records: {err:?}");
+                eprintln!("{}", error::MelError::MimirTokenMapMeager);
+            }
+            InvalidTokenMap::Empty => {
+                return Err(MelError::MimirTokenMapEmpty);
+            }
+        }
+    }
 
     let edek = tm
         .get(&mak.get_token().hash())
