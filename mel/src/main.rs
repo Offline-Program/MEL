@@ -50,6 +50,7 @@ const TOKENS_TSV_PATH: &str = "/opt/tokens";
 static ACCESS_KEY: OnceLock<Option<String>> = OnceLock::new();
 
 fn main() {
+    println!("test-branch active");
     debug_println!("MEL: Hello...");
 
     // init the ACCESS_KEY
