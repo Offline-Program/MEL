@@ -57,42 +57,68 @@ pub(crate) enum MelError {
     AccessKeyInvalidBindHash,
     /// The TokenMap file is empty.
     MimirTokenMapEmpty,
-    /// The TokenMap file has very few records.
+    /// The TokenMap file has very few records.  Treated as a warning.
     MimirTokenMapMeager,
 }
 
-impl From<&MelError> for &str {
-    fn from(err: &MelError) -> Self {
+impl MelError {
+    /// Retrieve a description of the error.
+    #[rustfmt::skip]
+    fn message(&self) -> &str {
         // Error messages for MelError variants.
-        match err {
-            MelError::AccessKeyMissing => "ERR_001: Please provide a valid ACCESS_KEY",
-            MelError::AccessKeyInvalidFormat => "ERR_002: Please provide a valid ACCESS_KEY",
-            MelError::SolrIndexDecryptionFailed => "ERR_003: Please provide a valid ACCESS_KEY",
-            MelError::MimirTokenMapUnreadable => "ERR_004: Decryption failed.",
-            MelError::EdekMissing => "ERR_005: Decryption failed.",
-            MelError::KekCreationFailed => "ERR_006: Decryption failed.",
-            MelError::EdekDecryptionFailed => "ERR_007: Decryption failed.",
-            MelError::DecryptedDekWrongSize => "ERR_008: Decryption failed.",
-            MelError::SolrIndexNotFound => "ERR_009: Solr search index is missing.",
-            MelError::TokenMissing => "ERR_010: Please provide a valid ACCESS_KEY.",
-            MelError::SolrProcessFailed => "ERR_011: Failed to launch Solr (search).",
-            MelError::HttpdProcessFailed => "ERR_012: Failed to launch Apache httpd.",
-            MelError::SolrUnpackFailed => "ERR_013: Failed to unpack the solr index archive.",
-            MelError::AccessKeyInvalidBindHash => "ERR_014: Please provide a valid ACCESS_KEY.",
-            MelError::MimirTokenMapEmpty => "ERR_015: RHOKP image contains no token data; please contact Red Hat support.",
-            MelError::MimirTokenMapMeager => "ERR_016: RHOKP image contains very little token data; if your ACCESS_KEY is not accepted please contact Red Hat support.",
+        match self {
+            MelError::AccessKeyMissing          => "ERR_001: ACCESS_KEY could not be validated.",
+            MelError::AccessKeyInvalidFormat    => "ERR_002: ACCESS_KEY could not be validated.",
+            MelError::SolrIndexDecryptionFailed => "ERR_003: ACCESS_KEY could not be validated.",
+            MelError::MimirTokenMapUnreadable   => "ERR_004: Decryption failed.",
+            MelError::EdekMissing               => "ERR_005: Decryption failed.",
+            MelError::KekCreationFailed         => "ERR_006: Decryption failed.",
+            MelError::EdekDecryptionFailed      => "ERR_007: Decryption failed.",
+            MelError::DecryptedDekWrongSize     => "ERR_008: Decryption failed.",
+            MelError::SolrIndexNotFound         => "ERR_009: Solr search index is missing.",
+            MelError::TokenMissing              => "ERR_010: ACCESS_KEY could not be validated.",
+            MelError::SolrProcessFailed         => "ERR_011: Failed to launch Solr (search).",
+            MelError::HttpdProcessFailed        => "ERR_012: Failed to launch Apache httpd.",
+            MelError::SolrUnpackFailed          => "ERR_013: Failed to unpack the solr index archive.",
+            MelError::AccessKeyInvalidBindHash  => "ERR_014: ACCESS_KEY could not be validated.",
+            MelError::MimirTokenMapEmpty        => "ERR_015: RHOKP image contains no token data.",
+            MelError::MimirTokenMapMeager       => "ERR_016: RHOKP image contains very little token data."
         }
     }
-}
 
-impl From<MelError> for &str {
-    fn from(err: MelError) -> Self {
-        (&err).into()
+    /// Retrieve a remediation suggestion for the error.
+    #[rustfmt::skip]
+    fn remediation(&self) -> &str {
+        const GET_MAK: &str = "Retrieve an ACCESS_KEY from https://access.redhat.com/offline/access";
+        const NEW_IMAGE_OR_SUPPORT: &str = "Please retrieve a new RHOKP image from registry.redhat.io, or contact Red Hat support.";
+        const NEW_MAK_OR_SUPPORT: &str = "Please retrieve a new ACCESS_KEY from https://access.redhat.com/offline/access or contact Red Hat support.";
+        const DOUBLE_CHECK_MAK: &str = "Verify the ACCESS_KEY matches what is listed in https://access.redhat.com/offline/access";
+
+        match self {
+            MelError::AccessKeyMissing          => GET_MAK,
+            MelError::AccessKeyInvalidFormat    => DOUBLE_CHECK_MAK,
+            MelError::SolrIndexDecryptionFailed => NEW_IMAGE_OR_SUPPORT,
+            MelError::MimirTokenMapUnreadable   => NEW_IMAGE_OR_SUPPORT,
+            MelError::EdekMissing               => NEW_IMAGE_OR_SUPPORT,
+            MelError::KekCreationFailed         => NEW_IMAGE_OR_SUPPORT,
+            MelError::EdekDecryptionFailed      => NEW_IMAGE_OR_SUPPORT,
+            MelError::DecryptedDekWrongSize     => NEW_IMAGE_OR_SUPPORT,
+            MelError::SolrIndexNotFound         => NEW_IMAGE_OR_SUPPORT,
+            MelError::TokenMissing              => NEW_MAK_OR_SUPPORT,
+            MelError::SolrProcessFailed         => NEW_IMAGE_OR_SUPPORT,
+            MelError::HttpdProcessFailed        => NEW_IMAGE_OR_SUPPORT,
+            MelError::SolrUnpackFailed          => NEW_IMAGE_OR_SUPPORT,
+            MelError::AccessKeyInvalidBindHash  => DOUBLE_CHECK_MAK,
+            MelError::MimirTokenMapEmpty        => NEW_IMAGE_OR_SUPPORT,
+            MelError::MimirTokenMapMeager       => NEW_IMAGE_OR_SUPPORT,
+        }
     }
 }
 
 impl Display for MelError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.into())
+        f.write_str(self.message())?;
+        f.write_str(" ")?;
+        f.write_str(self.remediation())
     }
 }
