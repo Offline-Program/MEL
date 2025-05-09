@@ -29,11 +29,11 @@ use error::MelError;
 use mel_libs::access_key::AccessKey;
 use mel_libs::crypt::{create_kek, dec, iv, AESParam};
 use mel_libs::token_map::{InvalidTokenMap, TokenMap};
-use std::io;
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::OnceLock;
 use std::time::Duration;
+use std::{env, io};
 use std::{fs, process};
 
 /// The location of the solr index in encrypted builds.
@@ -51,6 +51,14 @@ static ACCESS_KEY: OnceLock<Option<String>> = OnceLock::new();
 
 fn main() {
     debug_println!("MEL: Hello...");
+
+    if let Some(arg1) = env::args().nth(1) {
+        if arg1 == "credits" {
+            let art = get_credits();
+            println!("{art}");
+            return;
+        }
+    }
 
     // init the ACCESS_KEY
     ACCESS_KEY.get_or_init(|| std::env::var("ACCESS_KEY").ok());
@@ -314,4 +322,103 @@ fn start_solr() {
             }
         }
     });
+}
+
+/// credits ascii art
+fn get_credits() -> String {
+    String::from(
+        r#"
+                      .                                                  .l
+                     ..                                                .':c
+                    :l.                                            .,ok0kc
+                   ;Oc                                           .ck0Oo,.
+                 .c0k.                                          'kXOo;.
+                ,x0O;                                          'xX0d,
+             .;d0Oo,                                     .''',:xKXOc.
+         .,cdkOxdc.                                   .;dOKXXXXXNKx;
+      .:x000kdl,.                  .';;;;,,,'...     ,x0O0XXKO0Okxd,
+     .lOXXOddc.              .';cox0KXXXXXXXKK0kdl''oO0XNK0K0kkd:;;.
+     ;xOKNXkxc             .ckKNWNXKXXNNNXKKXXXX0OkkOOKNX00Oxc;;;'.
+     cxk0XXK0xc.         .oKXXNWNXXXXXXK0000OxddxO0O0OOkxddc,,'..
+    .:lldkKXK0Oxc.    .:okKKKXWNNXK000kkkkxolcldkOKX0kdoc,'.';.
+     ,c;:dkO0XX0Oxc,.'oxodOO0XXXXOxxkkkxxxdoodkOOOkxxxl,..,,:dl'
+      .::;;ck00000Okxddodxxkk0KKkxxkOOOOOkdxOOOkddol:,'..';cdOK0l.
+        ';;',cok0OO0OOOkkkkxkkOOO0KKK0OOOO00Okoccolc:'...;cdkOKXKx'
+          ';;'';clxOOOkOOOkOO00KXXXNX0000Okxxdoc::;,....,,:ldk0KXXd.
+            .,,...;oxxxOOOO00KXXNNNX00K000kxkocc:,'....',,:ccldk0X0l.
+              .''.':odkOOO0KKKXXXKK0OkOOOOOkdol:;,,''...';clodoodkKk,
+                .'.;odxkkkO000KK0000OO0OOOkkxdl:,.......,:lddxxkxdkk:.
+                 ';cdddkOO000000KKKK000kxxddxkxl''''...,cldxxkkkkkkOl.  ..
+                 :llxxxkOOO0OOkkOK0kxxOOOkxxxkko;,,::,';coxxxxkkxddxdolccc:
+               ..:ldOOOkkkO000kkkxkOKKKK00OO0Okdoc:cl:,,;cdxdoclxkxolc;'',.
+          :::;coddxkO0KKOxkOxdkkKXKK00OOOOkxdxxxolllcc::cll:;lxo;...';:;.
+           .';codooooxO00OdoxdlxkOOxdolcll:,,;::;:oolloocldc;od;.',.,c:'.
+             ',,'..';,,;;,;cll;..''....',;:,..''';loloddokklc:. .cd,''.
+              ';...':;''..:kOx:.  .',:ccc:,.',,:clddoddooxkl,.  .;c,..
+               ..,cclool,,xXNOl:;',;:codxdodxxxddkkxdl:,:xkc:,..;c;..
+                .:dlodol:cxK0dldxllolcldxddddxxkOOxo;..,lkx::,.,:,.
+                 :kxolcddlxOd:cxkxdk0OxolloxkO0Odl:'...;d0x;;:;;.
+                 .:okOOkolk0Ododxdlok000Okkkkxl:'...';;:d0k:;ll:.
+                  .,,cdolkOXNOddxdc''ck00ko;,'.....,;;:ok0Oc';:'
+                  ;;.;:,;clxkc,'...'cl:ldxxl,'','',;;:ldk0KOl,.
+                 ;xc,,,lc........';cxOd:';ooc:do;',,cdxO00000o,.
+                .o0x,,oOOd:,'':ox00OOkkoc;',:;cc,;::lxO0KKOkxxl'.
+               .:kOkkKNNX0kxlokOKXXXXXXXXKkl;',;:coodxOKXKOOxddc,.
+               .ckOKNX0xl;,,'',;:clodk0KKKNXOo:codxkOkk0KK0OOkxo:'
+               .ckKKOd:'..,;::ccc:;,,,:dkk0XXX0kxxxkO0O0K0000kxoc,.
+         .,:;:clx00kl'.,lc:;;::;;:ldxdc,';ox0XXKK0OOOO0000Oxxkkxc.
+          .,ldxxdol;'..';:cldxxl;cooll:'...;codkOOOkxxxddkOxodddl.
+             ..:ol:coo;..;lx000Odlc:,',;;:c;,;;::ccc::::ldxxoooo;.
+              ,dkxxkOxooxkO0XXXX0kOkkoloodkOdoodoccoodoooddddooo,
+             .o0Ok0XK000KXXXNNWNKOKXXX0OkkO00OkO0Oxdkkkkxxkkxoc;.
+             ,dkOKXKO0KKXNXNNNWNKK0KNNNXKK0kkKK0KK0kkkxxkkxdol;.
+            .:odOKKOO0KKNXKNNNWWXKK0XXXXX00Ok0XKKKX0kxxxxOxc;;.
+            .:oxOK0kk0KKX0OXWWWWXKKKXKKKKOxk0KK00KKOxxolodo:'.
+            .;ldx00xxO00K0OKWWNNXKK0KKK0OxdOKXK0kOOkxdoll:;;.
+            .,codkOxxOOO0KKXNNXXKKKK0OOkkxkKXK00kxxddol:c;'.
+             .,ldkOkkOOkO0KXNNXKKXX0OOkkkOKX0kOkdlooo:,,;'
+             .,ldkOO000kOOOKKXKKXXXOOOOO0K00kddxxoccl;.''.
+              ,cokkk0K0kOOOOO0KXXX0OO0KKKKkxkdoxxdlcc'....
+              'codxkOK0xk0KOO0KKK0OkOKK00Oxdkxoxdlc;;.
+              ';,:xkxOOkOK0O0KK0kkOOOOOkxxkdxocl:,'...
+              .. .cxxkOkkO0OOO0OxkOkxkxocoxolc,....
+                 ..:odxxdxOxxkOOxOxodxdlccc:,'.
+                  .'';l:cdxodkkxxxool:c:,''..
+                   . .'..:l:cdool:cc,.....
+                         ...,:;'.....
+                           ....
+                             .                                                                      
+
+     "When you find yourself sundered from the connected world, 
+      may the knowledge contained herein give you aid."
+      - Jared Sprague
+
+
+# Original 2025 Development Team
+
+## Architects and Lead Engineers
+
+- Jared Sprague (Product Owner)
+- Michael Clayton
+
+## Engineers
+
+- Rebekah Cruz
+- Jordan White
+- Vijay Mhaskar
+
+## Product & Program Managers
+
+- Brian Manning
+- Christine Bryan
+- Melissa Everette
+- Brent Baker
+
+## Special Thanks
+
+- Mark Shoger
+- Bryan Parry
+
+"#,
+    )
 }
