@@ -388,11 +388,10 @@ fn get_credits() -> String {
                          ...,:;'.....
                            ....
                              .                                                                      
-
-     "When you find yourself sundered from the connected world, 
-      may the knowledge contained herein give you aid."
-      - Jared Sprague
-
+                         ~ Mimir ~     
+     
+          "Take my knowledge, it will give you aid
+           when sundered from the connected world."
 
 # Original 2025 Development Team
 
@@ -413,6 +412,10 @@ fn get_credits() -> String {
 - Christine Bryan
 - Melissa Everette
 - Brent Baker
+
+## UX Designer
+
+- Fabien Cartal
 
 ## Special Thanks
 
