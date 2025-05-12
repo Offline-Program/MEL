@@ -1,7 +1,15 @@
 [package]
 name = "mimir_mel"
-version = "0.2.1"
+version = "1.0.0"
 edition = "2021"
+description = "Shared libraries for MEL"
+license = "GPL-3.0-only"
+repository = "https://github.com/Offline-Program/MEL"
+authors = [
+    "Michael Clayton <mclayton@redhat.com>",
+    "Jared Sprague <jsprague@redhat.com>",
+]
+publish = false
 
 [[bin]]
 name = "mel"
