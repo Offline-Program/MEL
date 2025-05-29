@@ -190,7 +190,10 @@ fn decrypt_edek() -> Result<Dek, error::MelError> {
         debug_println!("solr index unpacked");
 
         clean_up();
-    } else {
+    } else if Path::new(SOLR_PORTAL_PATH).exists() {
+        debug_println!("using previously unpacked solr index");
+    }
+    else {
         return Err(error::MelError::SolrIndexNotFound);
     }
 
