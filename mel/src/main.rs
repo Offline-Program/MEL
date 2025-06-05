@@ -79,6 +79,8 @@ fn main() {
         start_solr();
     }
 
+    start_ask();
+
     // launch httpd, with optional dek
     match start_httpd(dek) {
         Ok(_) => {}
@@ -192,8 +194,7 @@ fn decrypt_edek() -> Result<Dek, error::MelError> {
         clean_up();
     } else if Path::new(SOLR_PORTAL_PATH).exists() {
         debug_println!("using previously unpacked solr index");
-    }
-    else {
+    } else {
         return Err(error::MelError::SolrIndexNotFound);
     }
 
@@ -322,6 +323,27 @@ fn start_solr() {
             }
             Err(_e) => {
                 eprintln!("{}", MelError::SolrProcessFailed);
+            }
+        }
+    });
+}
+
+/// Launch ask api in the background.  Errors will not be returned but will be printed to stderr.
+fn start_ask() {
+    // Start solr in the background
+    std::thread::spawn(|| {
+        match Command::new("talking-head")
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit())
+            .spawn()
+        {
+            Ok(mut child) => {
+                if let Err(_e) = child.wait() {
+                    eprintln!("failed to start Ask API");
+                }
+            }
+            Err(_e) => {
+                eprintln!("failed to start Ask API");
             }
         }
     });
