@@ -2,7 +2,7 @@
 name = "mimir_mel"
 version = "1.0.0"
 edition = "2021"
-description = "Shared libraries for MEL"
+description = "Mimir Encrypted Launcher (MEL)"
 license = "GPL-3.0-only"
 repository = "https://github.com/Offline-Program/MEL"
 authors = [
