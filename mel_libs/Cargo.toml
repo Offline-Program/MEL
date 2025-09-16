@@ -19,3 +19,4 @@ wax = "0.6.0"
 serde = { version = "1.0.203", features = ["serde_derive"] }
 csv = "1.3.0"
 anyhow = "1.0.86"
+nom = "7.1.3"
