@@ -192,8 +192,7 @@ fn decrypt_edek() -> Result<Dek, error::MelError> {
         clean_up();
     } else if Path::new(SOLR_PORTAL_PATH).exists() {
         debug_println!("using previously unpacked solr index");
-    }
-    else {
+    } else {
         return Err(error::MelError::SolrIndexNotFound);
     }
 
@@ -408,6 +407,10 @@ fn get_credits() -> String {
 - Rebekah Cruz
 - Jordan White
 - Vijay Mhaskar
+
+## QE
+
+- Tushar Sinha
 
 ## Product & Program Managers
 
