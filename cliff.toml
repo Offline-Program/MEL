@@ -23,7 +23,7 @@ body = """
     ### {{ group | upper_first }}
     {% for commit in commits %}
         - {% if commit.breaking %}[**breaking**] {% endif %}{{ commit.message | upper_first }} \
-          ([{{ commit.id | truncate(length=8, end="") }}](https://gitlab.cee.redhat.com/customer-platform/offline-program/mimir-cli/-/commit/{{ commit.id | truncate(length=8, end="") }}))
+          ([{{ commit.id | truncate(length=8, end="") }}](https://github.com/Offline-Program/MEL/commit/{{ commit.id }}))
     {% endfor %}\
 {% endfor %}\n
 """
