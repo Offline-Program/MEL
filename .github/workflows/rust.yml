@@ -18,5 +18,7 @@ jobs:
     - uses: actions/checkout@v4
     - name: Check
       run: cargo check --verbose
+    - name: Audit
+      run: cargo audit
     - name: Run tests
       run: cargo test --verbose
