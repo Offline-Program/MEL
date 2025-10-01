@@ -32,6 +32,7 @@ use mel_libs::token_map::{InvalidTokenMap, TokenMap};
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::OnceLock;
+use std::thread::JoinHandle;
 use std::time::Duration;
 use std::{env, io};
 use std::{fs, process};
@@ -279,6 +280,8 @@ fn start_httpd(enc_input: Option<Dek>) -> Result<std::process::ExitStatus, error
         missing_mak_slow_warn();
     }
 
+    start_httpd_logwatch();
+
     httpd_cmd
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
@@ -286,6 +289,18 @@ fn start_httpd(enc_input: Option<Dek>) -> Result<std::process::ExitStatus, error
         .map_err(|_e| error::MelError::HttpdProcessFailed)?
         .wait()
         .map_err(|_e| error::MelError::HttpdProcessFailed)
+}
+
+/// Start watching Apache logs and sending them in periodic batches to mak-api.
+fn start_httpd_logwatch() -> JoinHandle<()> {
+    std::thread::spawn(|| {
+        let mut i = 0;
+        loop {
+            println!("start_httpd_logwatch tick {i}");
+            std::thread::sleep(Duration::from_secs(1));
+            i += 1;
+        }
+    })
 }
 
 /// Print a missing MAK warning with remediation instructions, and a slow countdown before

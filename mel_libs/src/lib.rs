@@ -16,4 +16,5 @@
 
 pub mod access_key;
 pub mod crypt;
+pub mod telemetry;
 pub mod token_map;

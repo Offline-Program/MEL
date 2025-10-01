@@ -246,6 +246,7 @@ dependencies = [
  "anyhow",
  "csv",
  "hex",
+ "nom",
  "openssl",
  "serde",
  "sha2",
