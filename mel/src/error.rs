@@ -59,6 +59,8 @@ pub(crate) enum MelError {
     MimirTokenMapEmpty,
     /// The TokenMap file has very few records.  Treated as a warning.
     MimirTokenMapMeager,
+    /// Invalid BYOK URL passed
+    InvalidByokUrl,
 }
 
 impl MelError {
@@ -82,7 +84,8 @@ impl MelError {
             MelError::SolrUnpackFailed          => "ERR_013: Failed to unpack the solr index archive.",
             MelError::AccessKeyInvalidBindHash  => "ERR_014: ACCESS_KEY could not be validated.",
             MelError::MimirTokenMapEmpty        => "ERR_015: RHOKP image contains no token data.",
-            MelError::MimirTokenMapMeager       => "ERR_016: RHOKP image contains very little token data."
+            MelError::MimirTokenMapMeager       => "ERR_016: RHOKP image contains very little token data.",
+            MelError::InvalidByokUrl            => "ERR_017: URL supplied to BYOK is invalid."
         }
     }
 
@@ -93,6 +96,7 @@ impl MelError {
         const NEW_IMAGE_OR_SUPPORT: &str = "Please retrieve a new RHOKP image from registry.redhat.io, or contact Red Hat support.";
         const NEW_MAK_OR_SUPPORT: &str = "Please retrieve a new ACCESS_KEY from https://access.redhat.com/offline/access or contact Red Hat support.";
         const DOUBLE_CHECK_MAK: &str = "Verify the ACCESS_KEY matches what is listed in https://access.redhat.com/offline/access";
+        const INVALID_CUSTOM_URL: &str = "Invalid URL supplied to BYOK. Please use a valid URL.";
 
         match self {
             MelError::AccessKeyMissing          => GET_MAK,
@@ -111,6 +115,7 @@ impl MelError {
             MelError::AccessKeyInvalidBindHash  => DOUBLE_CHECK_MAK,
             MelError::MimirTokenMapEmpty        => NEW_IMAGE_OR_SUPPORT,
             MelError::MimirTokenMapMeager       => NEW_IMAGE_OR_SUPPORT,
+            MelError::InvalidByokUrl            => INVALID_CUSTOM_URL,
         }
     }
 }
