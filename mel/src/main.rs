@@ -35,6 +35,7 @@ use std::sync::OnceLock;
 use std::time::Duration;
 use std::{env, io};
 use std::{fs, process};
+use url::Url;
 
 /// The location of the solr index in encrypted builds.
 const ENCRYPTED_SOLR_INDEX_PATH: &str = "/opt/solr/server/solr/portal/data.tar.gz.enc";
@@ -48,6 +49,8 @@ const TOKENS_TSV_PATH: &str = "/opt/tokens";
 
 /// The string form of the ACCESS_KEY passed in when launching Mimir.
 static ACCESS_KEY: OnceLock<Option<String>> = OnceLock::new();
+/// The string form of the URL passed when optionally using BYOK env for custom content.
+static BYOK_URL: OnceLock<Option<String>> = OnceLock::new();
 
 fn main() {
     debug_println!("MEL: Hello...");
@@ -62,6 +65,14 @@ fn main() {
 
     // init the ACCESS_KEY
     ACCESS_KEY.get_or_init(|| std::env::var("ACCESS_KEY").ok());
+
+    // init the URL if present and validate it
+    // program should fail if the URL is not valid
+    BYOK_URL.get_or_init(|| {
+        std::env::var("BYOK")
+            .ok()
+            .map(|url| validate_url(&url).unwrap_or_else(|e| handle_error(e)))
+    });
 
     // get DEK if needed, and handle errors
     let dek = decrypt_if_needed().unwrap_or_else(|e| {
@@ -269,6 +280,12 @@ fn start_httpd(enc_input: Option<Dek>) -> Result<std::process::ExitStatus, error
     let mak_missing =
         ACCESS_KEY.get().unwrap(/* safe while it's init'd at the beginning of main */).is_none();
 
+    // pass var to Apache for use in FE app
+    if let Some(byok_url) = BYOK_URL.get().unwrap(/* safe while it's init'd at the beginning of main, will never return None */).as_ref()
+    {
+        httpd_cmd.env("BYOK", byok_url);
+    }
+
     if let Some(dek) = enc_input {
         // TODO: pass the DEK to MAST via IPC instead of env to Apache
         httpd_cmd
@@ -430,4 +447,11 @@ fn get_credits() -> String {
 
 "#,
     )
+}
+
+fn validate_url(url: &str) -> Result<String, MelError> {
+    // Add URL parsing and validation logic
+    Url::parse(url)
+        .map(|_| url.to_string())
+        .map_err(|_| MelError::InvalidByokUrl)
 }
