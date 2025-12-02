@@ -19,6 +19,7 @@ path = "src/main.rs"
 mel_libs = { path = "../mel_libs/" }
 tar = "0.4.41"
 flate2 = "1.0.33"
+url = "2.5"
 
 [build-dependencies]
 mel_libs = { path = "../mel_libs/" }
