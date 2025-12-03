@@ -85,7 +85,7 @@ impl MelError {
             MelError::AccessKeyInvalidBindHash  => "ERR_014: ACCESS_KEY could not be validated.",
             MelError::MimirTokenMapEmpty        => "ERR_015: RHOKP image contains no token data.",
             MelError::MimirTokenMapMeager       => "ERR_016: RHOKP image contains very little token data.",
-            MelError::InvalidCustomUrl            => "ERR_017: URL supplied to CUSTOM_URL is invalid."
+            MelError::InvalidCustomUrl          => "ERR_017: URL supplied to CUSTOM_URL is invalid."
         }
     }
 
@@ -96,7 +96,7 @@ impl MelError {
         const NEW_IMAGE_OR_SUPPORT: &str = "Please retrieve a new RHOKP image from registry.redhat.io, or contact Red Hat support.";
         const NEW_MAK_OR_SUPPORT: &str = "Please retrieve a new ACCESS_KEY from https://access.redhat.com/offline/access or contact Red Hat support.";
         const DOUBLE_CHECK_MAK: &str = "Verify the ACCESS_KEY matches what is listed in https://access.redhat.com/offline/access";
-        const INVALID_CUSTOM_URL: &str = "Invalid URL supplied as CUSTOM_URL. Please ensure scheme and hostname are present.";
+        const INVALID_CUSTOM_URL: &str = "Please ensure scheme and hostname are present.";
 
         match self {
             MelError::AccessKeyMissing          => GET_MAK,
