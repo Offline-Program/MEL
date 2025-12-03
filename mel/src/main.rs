@@ -68,7 +68,11 @@ fn main() {
     ACCESS_KEY.get_or_init(|| std::env::var("ACCESS_KEY").ok());
 
     // init and validate CUSTOM_LINK if present
-    CUSTOM_LINK.get_or_init(|| std::env::var("CUSTOM_LINK").ok().and_then(|url| validate_url(&url)));
+    CUSTOM_LINK.get_or_init(|| {
+        std::env::var("CUSTOM_LINK")
+            .ok()
+            .and_then(|url| validate_url(&url))
+    });
 
     // get DEK if needed, and handle errors
     let dek = decrypt_if_needed().unwrap_or_else(|e| {
