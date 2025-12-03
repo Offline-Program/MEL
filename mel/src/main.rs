@@ -49,8 +49,6 @@ const TOKENS_TSV_PATH: &str = "/opt/tokens";
 
 /// The string form of the ACCESS_KEY passed in when launching Mimir.
 static ACCESS_KEY: OnceLock<Option<String>> = OnceLock::new();
-/// The string form of the URL passed when optionally using BYOK env for custom content.
-static CUSTOM_LINK: OnceLock<Option<String>> = OnceLock::new();
 
 fn main() {
     debug_println!("MEL: Hello...");
@@ -66,13 +64,11 @@ fn main() {
     // init the ACCESS_KEY
     ACCESS_KEY.get_or_init(|| std::env::var("ACCESS_KEY").ok());
 
-    // init the URL if present and validate it
-    // program should fail if the URL is not valid
-    CUSTOM_LINK.get_or_init(|| {
-        std::env::var("CUSTOM_LINK")
-            .ok()
-            .map(|url| validate_url(&url).unwrap_or_else(|e| handle_error(e)))
-    });
+    // validate CUSTOM_LINK if present (optional, but must be valid with scheme/protocol if provided)
+    let custom_link = match std::env::var("CUSTOM_LINK").ok() {
+        Some(url) => Some(validate_url(&url).unwrap_or_else(|e| handle_error(e))),
+        None => None,
+    };
 
     // get DEK if needed, and handle errors
     let dek = decrypt_if_needed().unwrap_or_else(|e| {
@@ -90,8 +86,7 @@ fn main() {
         start_solr();
     }
 
-    // launch httpd, with optional dek
-    match start_httpd(dek) {
+    match start_httpd(dek, custom_link) {
         Ok(_) => {}
         Err(err) => handle_error(err),
     }
@@ -273,7 +268,7 @@ fn clean_up() {
 }
 
 /// Start Apache httpd.  Returns Err if the process spawning fails for any reason.
-fn start_httpd(enc_input: Option<Dek>) -> Result<std::process::ExitStatus, error::MelError> {
+fn start_httpd(enc_input: Option<Dek>, custom_link: Option<String>) -> Result<std::process::ExitStatus, error::MelError> {
     // Start HTTPD in the foreground
     let mut httpd_cmd = Command::new("run-httpd");
 
@@ -281,8 +276,7 @@ fn start_httpd(enc_input: Option<Dek>) -> Result<std::process::ExitStatus, error
         ACCESS_KEY.get().unwrap(/* safe while it's init'd at the beginning of main */).is_none();
 
     // pass var to Apache for use in FE app
-    if let Some(custom_url) = CUSTOM_LINK.get().unwrap(/* safe while it's init'd at the beginning of main, will never return None */).as_ref()
-    {
+    if let Some(custom_url) = custom_link.as_ref() {
         httpd_cmd.env("CUSTOM_LINK", custom_url);
     }
 
@@ -449,9 +443,13 @@ fn get_credits() -> String {
     )
 }
 
+// pass on the error message to customer/user
 fn validate_url(url: &str) -> Result<String, MelError> {
-    // Add URL parsing and validation logic
-    Url::parse(url)
-        .map(|_| url.to_string())
-        .map_err(|_| MelError::InvalidCustomUrl)
+    match Url::parse(url) {
+        Ok(_) => Ok(url.to_string()),
+        Err(e) => {
+            eprintln!("CUSTOM_LINK validation failed: {}", e);
+            Err(MelError::InvalidCustomUrl)
+        }
+    }
 }
