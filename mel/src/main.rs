@@ -49,7 +49,8 @@ const TOKENS_TSV_PATH: &str = "/opt/tokens";
 
 /// The string form of the ACCESS_KEY passed in when launching Mimir.
 static ACCESS_KEY: OnceLock<Option<String>> = OnceLock::new();
-/// The string form of the URL passed when optionally using BYOK env for custom content.
+
+/// Optional custom link URL for Front End app access.
 static CUSTOM_LINK: OnceLock<Option<String>> = OnceLock::new();
 
 fn main() {
@@ -66,14 +67,16 @@ fn main() {
     // init the ACCESS_KEY
     ACCESS_KEY.get_or_init(|| std::env::var("ACCESS_KEY").ok());
 
-    // init the URL if present, then validate it
-    // program should fail if the URL is passed and it is not valid
+    // init and validate CUSTOM_LINK if present
     CUSTOM_LINK.get_or_init(|| {
-        std::env::var("CUSTOM_LINK").ok().and_then(|url| {
-            validate_url(&url)
-                .map(Some)
-                .unwrap_or_else(|e| handle_error(e))
-        })
+        if let Some(url) = std::env::var("CUSTOM_LINK").ok() {
+            match validate_url(&url) {
+                Ok(validated_url) => Some(validated_url),
+                Err(e) => handle_error(e),
+            }
+        } else {
+            None
+        }
     });
 
     // get DEK if needed, and handle errors
