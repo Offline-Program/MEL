@@ -115,7 +115,7 @@ impl MelError {
             MelError::AccessKeyInvalidBindHash  => DOUBLE_CHECK_MAK,
             MelError::MimirTokenMapEmpty        => NEW_IMAGE_OR_SUPPORT,
             MelError::MimirTokenMapMeager       => NEW_IMAGE_OR_SUPPORT,
-            MelError::InvalidCustomUrl            => INVALID_CUSTOM_URL,
+            MelError::InvalidCustomUrl          => INVALID_CUSTOM_URL,
         }
     }
 }
