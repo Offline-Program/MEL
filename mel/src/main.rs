@@ -35,6 +35,7 @@ use std::sync::OnceLock;
 use std::time::Duration;
 use std::{env, io};
 use std::{fs, process};
+use url::Url;
 
 /// The location of the solr index in encrypted builds.
 const ENCRYPTED_SOLR_INDEX_PATH: &str = "/opt/solr/server/solr/portal/data.tar.gz.enc";
@@ -49,6 +50,9 @@ const TOKENS_TSV_PATH: &str = "/opt/tokens";
 /// The string form of the ACCESS_KEY passed in when launching Mimir.
 static ACCESS_KEY: OnceLock<Option<String>> = OnceLock::new();
 
+/// Optional custom link URL for Front End app access.
+static CUSTOM_LINK: OnceLock<Option<String>> = OnceLock::new();
+
 fn main() {
     debug_println!("MEL: Hello...");
 
@@ -62,6 +66,13 @@ fn main() {
 
     // init the ACCESS_KEY
     ACCESS_KEY.get_or_init(|| std::env::var("ACCESS_KEY").ok());
+
+    // init and validate CUSTOM_LINK if present
+    CUSTOM_LINK.get_or_init(|| {
+        std::env::var("CUSTOM_LINK")
+            .ok()
+            .and_then(|url| validate_url(&url))
+    });
 
     // get DEK if needed, and handle errors
     let dek = decrypt_if_needed().unwrap_or_else(|e| {
@@ -269,6 +280,11 @@ fn start_httpd(enc_input: Option<Dek>) -> Result<std::process::ExitStatus, error
     let mak_missing =
         ACCESS_KEY.get().unwrap(/* safe while it's init'd at the beginning of main */).is_none();
 
+    // pass var to Apache for use in FE app if present/being used
+    if let Some(Some(custom_url)) = CUSTOM_LINK.get() {
+        httpd_cmd.env("CUSTOM_LINK", custom_url);
+    }
+
     if let Some(dek) = enc_input {
         // TODO: pass the DEK to MAST via IPC instead of env to Apache
         httpd_cmd
@@ -430,4 +446,25 @@ fn get_credits() -> String {
 
 "#,
     )
+}
+
+fn validate_url(url: &str) -> Option<String> {
+    match Url::parse(url) {
+        Ok(parsed_url) => {
+            // double check there is a valid scheme
+            // url::parse will accept urls like localhost:3000/, and apply
+            // localhhost as the scheme, which isnt truly valid!
+            let scheme = parsed_url.scheme();
+            if scheme != "http" && scheme != "https" {
+                eprintln!("CUSTOM_LINK validation failed: URL must use http:// or https:// scheme");
+                handle_error(MelError::InvalidCustomUrl)
+            } else {
+                Some(url.to_string())
+            }
+        }
+        Err(e) => {
+            eprintln!("CUSTOM_LINK validation failed: {}", e);
+            handle_error(MelError::InvalidCustomUrl)
+        }
+    }
 }
