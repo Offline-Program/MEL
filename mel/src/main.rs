@@ -450,7 +450,18 @@ fn get_credits() -> String {
 
 fn validate_url(url: &str) -> Option<String> {
     match Url::parse(url) {
-        Ok(_) => Some(url.to_string()),
+        Ok(parsed_url) => {
+            // double check there is a valid scheme
+            // url::parse will accept urls like localhost:3000/, and apply
+            // localhhost as the scheme, which isnt truly valid!
+            let scheme = parsed_url.scheme();
+            if scheme != "http" && scheme != "https" {
+                eprintln!("CUSTOM_LINK validation failed: URL must use http:// or https:// scheme");
+                handle_error(MelError::InvalidCustomUrl)
+            } else {
+                Some(url.to_string())
+            }
+        }
         Err(e) => {
             eprintln!("CUSTOM_LINK validation failed: {}", e);
             handle_error(MelError::InvalidCustomUrl)
