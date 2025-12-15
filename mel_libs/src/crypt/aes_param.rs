@@ -58,7 +58,7 @@ impl Display for AESParamFromHexError {
             AESParamFromHexError::BadAESParamWidth => "AESParamWidth incorrect".to_string(),
             AESParamFromHexError::BadHex(h) => format!("{h}"),
         };
-        write!(f, "{}", msg)
+        write!(f, "{msg}")
     }
 }
 

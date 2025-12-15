@@ -221,8 +221,7 @@ fn decrypt_solr(dek: &str, iv: &str) -> io::Result<()> {
     if status.success() {
         Ok(())
     } else {
-        Err(io::Error::new(
-            io::ErrorKind::Other,
+        Err(io::Error::other(
             format!(
                 "OpenSSL decryption failed with exit code: {:?}",
                 status.code()
@@ -241,8 +240,7 @@ fn unpack_solr_tar_gz() -> io::Result<()> {
     if status.success() {
         Ok(())
     } else {
-        Err(io::Error::new(
-            io::ErrorKind::Other,
+        Err(io::Error::other(
             format!(
                 "Solr tar extraction failed with exit code: {:?}",
                 status.code()
@@ -257,7 +255,7 @@ fn clean_up() {
 
     for file in files_to_remove {
         if Path::new(file).exists() && fs::remove_file(file).is_err() {
-            eprintln!("Failed to remove {}", file);
+            eprintln!("Failed to remove {file}");
         }
     }
 }
