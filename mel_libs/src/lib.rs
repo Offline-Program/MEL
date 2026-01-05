@@ -14,6 +14,8 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+//! Encryption and access key libraries for Mimir Encrypted Launcher.
+
 pub mod access_key;
 pub mod crypt;
 pub mod token_map;
