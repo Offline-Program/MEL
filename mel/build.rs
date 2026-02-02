@@ -1,3 +1,5 @@
+//! Validates encryption-related environment variables before building MEL.
+
 // Mimir Encrypted Launcher & supporting libraries
 // Copyright (C) 2025  Red Hat, Inc.
 //
@@ -17,10 +19,12 @@
 use mel_libs::access_key::AccessKey;
 use std::{env, process};
 
+/// Perform pre-compilation validations.
 fn main() {
     validate_crypt_env("MIMIR_SALT", 16);
 }
 
+/// Validates encryption-related environment variables.
 fn validate_crypt_env(env_name: &str, env_len: usize) {
     println!("cargo:rerun-if-env-changed=ENCRYPT");
 
