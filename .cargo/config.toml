@@ -1,0 +1,3 @@
+# Enforce documentation requirements for all crates in the workspace.
+[build]
+rustflags = ["-W", "missing_docs", "-W", "clippy::missing_docs_in_private_items"]

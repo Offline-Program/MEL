@@ -154,7 +154,7 @@ impl TokenMap {
     }
 
     /// Returns an iterator over the token / edek pairs.
-    pub fn iter(&self) -> hash_map::Iter<Token, Option<AESParam>> {
+    pub fn iter(&self) -> hash_map::Iter<'_, Token, Option<AESParam>> {
         self.token_map.iter()
     }
 
