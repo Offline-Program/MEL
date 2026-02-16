@@ -49,6 +49,9 @@ const TOKENS_TSV_PATH: &str = "/opt/tokens";
 /// The string form of the ACCESS_KEY passed in when launching Mimir.
 static ACCESS_KEY: OnceLock<Option<String>> = OnceLock::new();
 
+/// Boolean for showing the online-view button in the nav
+static ONLINE_VIEW: OnceLock<Option<String>> = OnceLock::new();
+
 fn main() {
     debug_println!("MEL: Hello...");
 
@@ -220,12 +223,10 @@ fn decrypt_solr(dek: &str, iv: &str) -> io::Result<()> {
     if status.success() {
         Ok(())
     } else {
-        Err(io::Error::other(
-            format!(
-                "OpenSSL decryption failed with exit code: {:?}",
-                status.code()
-            ),
-        ))
+        Err(io::Error::other(format!(
+            "OpenSSL decryption failed with exit code: {:?}",
+            status.code()
+        )))
     }
 }
 
@@ -239,12 +240,10 @@ fn unpack_solr_tar_gz() -> io::Result<()> {
     if status.success() {
         Ok(())
     } else {
-        Err(io::Error::other(
-            format!(
-                "Solr tar extraction failed with exit code: {:?}",
-                status.code()
-            ),
-        ))
+        Err(io::Error::other(format!(
+            "Solr tar extraction failed with exit code: {:?}",
+            status.code()
+        )))
     }
 }
 
@@ -263,6 +262,11 @@ fn clean_up() {
 fn start_httpd(enc_input: Option<Dek>) -> Result<std::process::ExitStatus, error::MelError> {
     // Start HTTPD in the foreground
     let mut httpd_cmd = Command::new("run-httpd");
+
+    // pass var to Apache for use in FE app if present
+    if let Some(Some(_val)) = ONLINE_VIEW.get() {
+        httpd_cmd.env("ONLINE_VIEW", "true");
+    }
 
     let mak_missing =
         ACCESS_KEY.get().unwrap(/* safe while it's init'd at the beginning of main */).is_none();
