@@ -264,8 +264,10 @@ fn start_httpd(enc_input: Option<Dek>) -> Result<std::process::ExitStatus, error
     let mut httpd_cmd = Command::new("run-httpd");
 
     // pass var to Apache for use in FE app if present
-    if let Some(Some(_val)) = ONLINE_VIEW.get() {
-        httpd_cmd.env("ONLINE_VIEW", "true");
+    if let Some(Some(val)) = ONLINE_VIEW.get() {
+        if val.to_lowercase() == "true" || val == "1" {
+            httpd_cmd.env("ONLINE_VIEW", "true");
+        }
     }
 
     let mak_missing =
