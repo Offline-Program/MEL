@@ -17,18 +17,20 @@
 #![warn(clippy::missing_docs_in_private_items, missing_docs)]
 
 //! The Mimir Encrypted Launcher (MEL).  For plaintext Mimir builds, MEL simply launches Solr and
-//! Apache.  For encrypted builds, MEL validates the given ACCESS_KEY, decrypts the solr index, and
-//! sets up the necessary values for Apache to perform decryption of paywalled content, then
-//! launches Solr and Apache.
+//! serves HTTP.  For encrypted builds, MEL validates the given ACCESS_KEY, decrypts the solr
+//! index, and sets up the necessary values for the HTTP server to perform decryption of paywalled
+//! content, then launches Solr and the HTTP server.
 
 #[macro_use]
 mod debug;
 mod error;
+mod server;
 
 use error::MelError;
 use mel_libs::access_key::AccessKey;
 use mel_libs::crypt::{create_kek, dec, iv, AESParam};
 use mel_libs::token_map::{InvalidTokenMap, TokenMap};
+use server::{config::ServerConfig, file_backend::LocalFileBackend};
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::OnceLock;
@@ -48,6 +50,16 @@ const TOKENS_TSV_PATH: &str = "/opt/tokens";
 
 /// The string form of the ACCESS_KEY passed in when launching Mimir.
 static ACCESS_KEY: OnceLock<Option<String>> = OnceLock::new();
+
+/// Storage for the Data Encryption Key hex string.  Persists for the process lifetime so that the
+/// `&'static str` references required by [`ServerConfig`] remain valid.
+static DEK_HEX: OnceLock<String> = OnceLock::new();
+
+/// Storage for the Initialisation Vector hex string.  Same lifetime reasoning as [`DEK_HEX`].
+static IV_HEX: OnceLock<String> = OnceLock::new();
+
+/// A newtype to wrap the decrypted Data Encryption Key.
+struct Dek(String);
 
 fn main() {
     debug_println!("MEL: Hello...");
@@ -79,10 +91,39 @@ fn main() {
         start_solr();
     }
 
-    // launch httpd, with optional dek
-    match start_httpd(dek) {
-        Ok(_) => {}
-        Err(err) => handle_error(err),
+    // launch the HTTP server (blocks until the server exits)
+    let mak_missing =
+        ACCESS_KEY.get().unwrap(/* safe: init'd above */).is_none();
+
+    if is_encrypted() && mak_missing {
+        missing_mak_slow_warn();
+    }
+
+    // Store DEK and IV in 'static OnceLocks so ServerConfig can hold &'static str references.
+    let (dek_hex, iv_hex): (Option<&'static str>, Option<&'static str>) = match dek {
+        Some(d) => {
+            let dek_ref = DEK_HEX.get_or_init(|| d.0);
+            let iv_ref = IV_HEX.get_or_init(|| iv().as_hex().to_string());
+            (Some(dek_ref.as_str()), Some(iv_ref.as_str()))
+        }
+        None => (None, None),
+    };
+
+    if is_encrypted() && mak_missing {
+        // Store the sentinel so ServerConfig can advertise missing-key state to HTML pages.
+        unsafe {
+            std::env::set_var("MIMIR_MISSING_ACCESS_KEY", "true");
+        }
+    }
+
+    let config = ServerConfig::from_env(dek_hex, iv_hex);
+    let backend = LocalFileBackend::new(&config.webroot);
+
+    // Run the async Axum server on the current thread's tokio runtime.
+    let rt = tokio::runtime::Runtime::new().expect("failed to create tokio runtime");
+    match rt.block_on(server::run(config, backend)) {
+        Ok(()) => {}
+        Err(_) => handle_error(MelError::ServerFailed),
     }
 }
 
@@ -94,9 +135,6 @@ fn handle_error(err: error::MelError) -> ! {
     eprintln!("{err}");
     process::exit(1);
 }
-
-/// A newtype to wrap the decrypted Data Encryption Key.
-struct Dek(String);
 
 /// If encryption is enabled, attempt to decrypt the user's EDEK to produce the DEK.
 fn decrypt_if_needed() -> Result<Option<Dek>, error::MelError> {
@@ -220,12 +258,10 @@ fn decrypt_solr(dek: &str, iv: &str) -> io::Result<()> {
     if status.success() {
         Ok(())
     } else {
-        Err(io::Error::other(
-            format!(
-                "OpenSSL decryption failed with exit code: {:?}",
-                status.code()
-            ),
-        ))
+        Err(io::Error::other(format!(
+            "OpenSSL decryption failed with exit code: {:?}",
+            status.code()
+        )))
     }
 }
 
@@ -239,12 +275,10 @@ fn unpack_solr_tar_gz() -> io::Result<()> {
     if status.success() {
         Ok(())
     } else {
-        Err(io::Error::other(
-            format!(
-                "Solr tar extraction failed with exit code: {:?}",
-                status.code()
-            ),
-        ))
+        Err(io::Error::other(format!(
+            "Solr tar extraction failed with exit code: {:?}",
+            status.code()
+        )))
     }
 }
 
@@ -257,33 +291,6 @@ fn clean_up() {
             eprintln!("Failed to remove {file}");
         }
     }
-}
-
-/// Start Apache httpd.  Returns Err if the process spawning fails for any reason.
-fn start_httpd(enc_input: Option<Dek>) -> Result<std::process::ExitStatus, error::MelError> {
-    // Start HTTPD in the foreground
-    let mut httpd_cmd = Command::new("run-httpd");
-
-    let mak_missing =
-        ACCESS_KEY.get().unwrap(/* safe while it's init'd at the beginning of main */).is_none();
-
-    if let Some(dek) = enc_input {
-        // TODO: pass the DEK to MAST via IPC instead of env to Apache
-        httpd_cmd
-            .env("MIMIR_DEK", dek.0)
-            .env("MIMIR_IV", iv().as_hex());
-    } else if is_encrypted() && mak_missing {
-        httpd_cmd.env("MIMIR_MISSING_ACCESS_KEY", "true");
-        missing_mak_slow_warn();
-    }
-
-    httpd_cmd
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .spawn()
-        .map_err(|_e| error::MelError::HttpdProcessFailed)?
-        .wait()
-        .map_err(|_e| error::MelError::HttpdProcessFailed)
 }
 
 /// Print a missing MAK warning with remediation instructions, and a slow countdown before

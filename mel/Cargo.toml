@@ -19,6 +19,19 @@ path = "src/main.rs"
 mel_libs = { path = "../mel_libs/" }
 tar = "0.4.41"
 flate2 = "1.0.33"
+axum = "0.8"
+tokio = { version = "1", features = ["full"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["compression-gzip", "set-header"] }
+hyper = { version = "1", features = ["full"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+mime_guess = "2"
+bytes = "1"
+http = "1"
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+openssl = "0.10"
 
 [build-dependencies]
 mel_libs = { path = "../mel_libs/" }
