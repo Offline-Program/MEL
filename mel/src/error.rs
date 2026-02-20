@@ -51,8 +51,8 @@ pub(crate) enum MelError {
     TokenMissing,
     /// Solr process failed.
     SolrProcessFailed,
-    /// Apache httpd process failed.
-    HttpdProcessFailed,
+    /// Mimir HTTP server failed to start or crashed.
+    ServerFailed,
     /// User's access key's is cryptographically invalid (the hash component doesn't validate).
     AccessKeyInvalidBindHash,
     /// The TokenMap file is empty.
@@ -78,7 +78,7 @@ impl MelError {
             MelError::SolrIndexNotFound         => "ERR_009: Solr search index is missing.",
             MelError::TokenMissing              => "ERR_010: ACCESS_KEY could not be validated.",
             MelError::SolrProcessFailed         => "ERR_011: Failed to launch Solr (search).",
-            MelError::HttpdProcessFailed        => "ERR_012: Failed to launch Apache httpd.",
+            MelError::ServerFailed              => "ERR_012: Failed to launch the HTTP server.",
             MelError::SolrUnpackFailed          => "ERR_013: Failed to unpack the solr index archive.",
             MelError::AccessKeyInvalidBindHash  => "ERR_014: ACCESS_KEY could not be validated.",
             MelError::MimirTokenMapEmpty        => "ERR_015: RHOKP image contains no token data.",
@@ -106,7 +106,7 @@ impl MelError {
             MelError::SolrIndexNotFound         => NEW_IMAGE_OR_SUPPORT,
             MelError::TokenMissing              => NEW_MAK_OR_SUPPORT,
             MelError::SolrProcessFailed         => NEW_IMAGE_OR_SUPPORT,
-            MelError::HttpdProcessFailed        => NEW_IMAGE_OR_SUPPORT,
+            MelError::ServerFailed              => NEW_IMAGE_OR_SUPPORT,
             MelError::SolrUnpackFailed          => NEW_IMAGE_OR_SUPPORT,
             MelError::AccessKeyInvalidBindHash  => DOUBLE_CHECK_MAK,
             MelError::MimirTokenMapEmpty        => NEW_IMAGE_OR_SUPPORT,
