@@ -100,9 +100,7 @@ impl ServerConfig {
 
         let unclassified_banner = std::env::var("UNCLASSIFIED_BANNER").ok();
 
-        let missing_access_key = std::env::var("MIMIR_MISSING_ACCESS_KEY")
-            .map(|v| v.trim() == "true")
-            .unwrap_or(false);
+        let missing_access_key = false;
 
         Self {
             bind_addr,

@@ -41,7 +41,7 @@ pub(crate) trait FileBackend: Send + Sync + 'static {
 }
 
 /// A [`FileBackend`] that reads files from the local filesystem under a configured webroot.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub(crate) struct LocalFileBackend {
     /// Absolute path to the directory that is the root of the web content, e.g. `/var/www/html`.
     webroot: String,
@@ -57,27 +57,35 @@ impl LocalFileBackend {
 
     /// Resolve a URL path to a filesystem path under the webroot.
     ///
-    /// Strips any leading `/` from `path` and joins it to the webroot.
-    fn resolve(&self, path: &str) -> std::path::PathBuf {
+    /// Strips any leading `/` from `path`, rejects paths containing `..` segments to prevent
+    /// directory traversal, and joins the remainder to the webroot.
+    fn resolve(&self, path: &str) -> Option<std::path::PathBuf> {
         let stripped = path.trim_start_matches('/');
-        std::path::Path::new(&self.webroot).join(stripped)
+        if stripped.split('/').any(|seg| seg == "..") {
+            return None;
+        }
+        Some(std::path::Path::new(&self.webroot).join(stripped))
     }
 }
 
 impl FileBackend for LocalFileBackend {
     async fn get(&self, path: &str) -> Result<Option<FileResponse>> {
-        let fs_path = self.resolve(path);
+        let fs_path = match self.resolve(path) {
+            Some(p) => p,
+            None => return Ok(None),
+        };
 
-        if !fs_path.exists() {
-            return Ok(None);
+        match tokio::fs::read(&fs_path).await {
+
+            Ok(bytes) => {
+                let content_type = mime_guess::from_path(&fs_path)
+                    .first_or_octet_stream()
+                    .to_string();
+
+                Ok(Some(FileResponse { bytes, content_type }))
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(e.into()),
         }
-
-        let bytes = tokio::fs::read(&fs_path).await?;
-
-        let content_type = mime_guess::from_path(&fs_path)
-            .first_or_octet_stream()
-            .to_string();
-
-        Ok(Some(FileResponse { bytes, content_type }))
     }
 }

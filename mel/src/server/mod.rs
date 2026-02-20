@@ -54,18 +54,30 @@ use bytes::Bytes;
 
 use config::ServerConfig;
 use file_backend::FileBackend;
-use handlers::{AppState, docs_redirect, plc_api, security_data_csaf, security_data_cve, serve_static, solr_proxy};
+use handlers::{AppState, docs_redirect, parse_pmap, plc_api, security_data_csaf, security_data_cve, serve_static, solr_proxy};
 
 /// Build and bind the Axum router, then serve requests until the process terminates.
+///
+/// The server shuts down gracefully on `SIGTERM` or `SIGINT`, finishing in-flight requests before
+/// exiting.
 pub(crate) async fn run<F: FileBackend>(config: ServerConfig, backend: F) -> Result<()> {
     let http_client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
         .build()?;
 
+    let pmap = match backend.get("/pmap.txt").await {
+        Ok(Some(f)) => parse_pmap(&String::from_utf8_lossy(&f.bytes)),
+        _ => {
+            eprintln!("Warning: pmap.txt not found; PLC API lookups will return 404");
+            std::collections::HashMap::new()
+        }
+    };
+
     let state = Arc::new(AppState {
         config: config.clone(),
         backend,
         http_client,
+        pmap,
     });
 
     let app = build_router(state);
@@ -73,9 +85,36 @@ pub(crate) async fn run<F: FileBackend>(config: ServerConfig, backend: F) -> Res
     let listener = tokio::net::TcpListener::bind(config.bind_addr).await?;
     eprintln!("Mimir HTTP server listening on {}", config.bind_addr);
 
-    axum::serve(listener, app).await?;
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal())
+        .await?;
 
     Ok(())
+}
+
+/// Wait for a shutdown signal (`SIGTERM` or `SIGINT`).
+///
+/// On Unix, both `SIGTERM` (sent by `podman stop` / `docker stop` / Kubernetes) and `SIGINT`
+/// (`Ctrl-C` during development) trigger a graceful shutdown.
+async fn shutdown_signal() {
+    let ctrl_c = tokio::signal::ctrl_c();
+
+    #[cfg(unix)]
+    {
+        let mut sigterm =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                .expect("failed to register SIGTERM handler");
+        tokio::select! {
+            _ = ctrl_c => { eprintln!("Received SIGINT, shutting down…"); }
+            _ = sigterm.recv() => { eprintln!("Received SIGTERM, shutting down…"); }
+        }
+    }
+
+    #[cfg(not(unix))]
+    {
+        ctrl_c.await.ok();
+        eprintln!("Received shutdown signal, shutting down…");
+    }
 }
 
 /// Construct the Axum [`Router`] with all routes and shared state.

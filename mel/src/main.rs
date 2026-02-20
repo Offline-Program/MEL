@@ -109,14 +109,10 @@ fn main() {
         None => (None, None),
     };
 
+    let mut config = ServerConfig::from_env(dek_hex, iv_hex);
     if is_encrypted() && mak_missing {
-        // Store the sentinel so ServerConfig can advertise missing-key state to HTML pages.
-        unsafe {
-            std::env::set_var("MIMIR_MISSING_ACCESS_KEY", "true");
-        }
+        config.missing_access_key = true;
     }
-
-    let config = ServerConfig::from_env(dek_hex, iv_hex);
     let backend = LocalFileBackend::new(&config.webroot);
 
     // Run the async Axum server on the current thread's tokio runtime.
