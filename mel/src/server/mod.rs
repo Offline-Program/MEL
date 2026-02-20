@@ -55,6 +55,7 @@ use bytes::Bytes;
 use config::ServerConfig;
 use file_backend::FileBackend;
 use handlers::{AppState, docs_redirect, parse_pmap, plc_api, security_data_csaf, security_data_cve, serve_static, solr_proxy};
+use minijinja::syntax::SyntaxConfig;
 
 /// Build and bind the Axum router, then serve requests until the process terminates.
 ///
@@ -73,11 +74,14 @@ pub(crate) async fn run<F: FileBackend>(config: ServerConfig, backend: F) -> Res
         }
     };
 
+    let template_env = build_template_env(&config);
+
     let state = Arc::new(AppState {
         config: config.clone(),
         backend,
         http_client,
         pmap,
+        template_env,
     });
 
     let app = build_router(state);
@@ -115,6 +119,38 @@ async fn shutdown_signal() {
         ctrl_c.await.ok();
         eprintln!("Received shutdown signal, shutting down…");
     }
+}
+
+/// Build a MiniJinja [`Environment`](minijinja::Environment) with custom delimiters and a
+/// filesystem loader rooted at the webroot.
+fn build_template_env(config: &ServerConfig) -> minijinja::Environment<'static> {
+    let mut env = minijinja::Environment::new();
+
+    env.set_syntax(
+        SyntaxConfig::builder()
+            .block_delimiters("#%", "%#")
+            .variable_delimiters("#{", "}#")
+            .comment_delimiters("##", "##")
+            .build()
+            .expect("invalid MiniJinja syntax config"),
+    );
+
+    env.set_auto_escape_callback(|_| minijinja::AutoEscape::None);
+
+    let webroot = config.webroot.clone();
+    env.set_loader(move |name: &str| {
+        let path = std::path::Path::new(&webroot).join(name.trim_start_matches('/'));
+        match std::fs::read_to_string(&path) {
+            Ok(s) => Ok(Some(s)),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(minijinja::Error::new(
+                minijinja::ErrorKind::InvalidOperation,
+                format!("failed to read {}: {e}", path.display()),
+            )),
+        }
+    });
+
+    env
 }
 
 /// Construct the Axum [`Router`] with all routes and shared state.
