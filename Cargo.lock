@@ -718,14 +718,19 @@ dependencies = [
  "axum",
  "bytes",
  "flate2",
+ "hyper",
+ "hyper-util",
  "mel_libs",
  "mime_guess",
  "minijinja",
  "openssl",
+ "regex-lite",
  "reqwest",
  "serde",
  "tar",
  "tokio",
+ "tokio-openssl",
+ "tower-service",
 ]
 
 [[package]]
@@ -1033,6 +1038,12 @@ dependencies = [
  "memchr",
  "regex-syntax",
 ]
+
+[[package]]
+name = "regex-lite"
+version = "0.1.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cab834c73d247e67f4fae452806d17d3c7501756d98c8808d7c9c7aa7d18f973"
 
 [[package]]
 name = "regex-syntax"
@@ -1439,6 +1450,17 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "tokio-openssl"
+version = "0.6.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "59df6849caa43bb7567f9a36f863c447d95a11d5903c9cc334ba32576a27eadd"
+dependencies = [
+ "openssl",
+ "openssl-sys",
+ "tokio",
 ]
 
 [[package]]
