@@ -27,7 +27,11 @@ bytes = "1"
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }
 openssl = "0.10"
+tokio-openssl = "0.6"
+hyper = { version = "1", features = ["http1", "server"] }
+hyper-util = { version = "0.1", features = ["tokio", "server"] }
 regex-lite = "0.1"
+tower-service = "0.3"
 
 [build-dependencies]
 mel_libs = { path = "../mel_libs/" }

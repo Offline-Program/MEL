@@ -41,6 +41,7 @@ pub(crate) mod config;
 pub(crate) mod file_backend;
 pub(crate) mod handlers;
 
+use std::pin::Pin;
 use std::sync::Arc;
 
 use anyhow::Result;
@@ -51,8 +52,11 @@ use axum::{
     Router,
 };
 use bytes::Bytes;
+use hyper_util::rt::TokioIo;
+use openssl::ssl::{Ssl, SslAcceptor, SslFiletype, SslMethod};
+use tower_service::Service;
 
-use config::ServerConfig;
+use config::{ServerConfig, TlsConfig};
 use file_backend::FileBackend;
 use handlers::{AppState, docs_redirect, parse_pmap, plc_api, security_data_csaf, security_data_cve, serve_static, solr_proxy};
 
@@ -73,6 +77,8 @@ pub(crate) async fn run<F: FileBackend>(config: ServerConfig, backend: F) -> Res
         }
     };
 
+    let tls_config = config.tls.clone();
+
     let state = Arc::new(AppState {
         config: config.clone(),
         backend,
@@ -85,11 +91,89 @@ pub(crate) async fn run<F: FileBackend>(config: ServerConfig, backend: F) -> Res
     let listener = tokio::net::TcpListener::bind(config.bind_addr).await?;
     eprintln!("Mimir HTTP server listening on {}", config.bind_addr);
 
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
-        .await?;
+    if let Some(tls) = tls_config {
+        let tls_listener = tokio::net::TcpListener::bind(tls.bind_addr).await?;
+        eprintln!("Mimir HTTPS server listening on {}", tls.bind_addr);
+
+        let acceptor = build_tls_acceptor(&tls)?;
+        let tls_app = app.clone();
+
+        let tls_handle = tokio::spawn(serve_tls(tls_listener, acceptor, tls_app));
+
+        axum::serve(listener, app)
+            .with_graceful_shutdown(shutdown_signal())
+            .await?;
+
+        tls_handle.abort();
+    } else {
+        axum::serve(listener, app)
+            .with_graceful_shutdown(shutdown_signal())
+            .await?;
+    }
 
     Ok(())
+}
+
+/// Accept TLS connections in a loop, spawning a task per connection.
+async fn serve_tls(listener: tokio::net::TcpListener, acceptor: SslAcceptor, app: Router) {
+    loop {
+        let (tcp_stream, remote_addr) = match listener.accept().await {
+            Ok(conn) => conn,
+            Err(e) => {
+                eprintln!("TLS accept error: {e}");
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                continue;
+            }
+        };
+
+        let acceptor = acceptor.clone();
+        let app = app.clone();
+
+        tokio::spawn(async move {
+            let ssl = match Ssl::new(acceptor.context()) {
+                Ok(ssl) => ssl,
+                Err(e) => {
+                    eprintln!("{remote_addr}: SSL init error: {e}");
+                    return;
+                }
+            };
+
+            let mut tls_stream = match tokio_openssl::SslStream::new(ssl, tcp_stream) {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("{remote_addr}: SslStream::new error: {e}");
+                    return;
+                }
+            };
+
+            if let Err(e) = Pin::new(&mut tls_stream).accept().await {
+                eprintln!("{remote_addr}: TLS handshake failed: {e}");
+                return;
+            }
+
+            let io = TokioIo::new(tls_stream);
+            let service = hyper::service::service_fn(move |req: axum::http::Request<hyper::body::Incoming>| {
+                app.clone().call(req)
+            });
+
+            if let Err(e) = hyper::server::conn::http1::Builder::new()
+                .serve_connection(io, service)
+                .await
+            {
+                if !e.to_string().contains("connection reset") {
+                    eprintln!("{remote_addr}: HTTPS error: {e}");
+                }
+            }
+        });
+    }
+}
+
+/// Build an [`SslAcceptor`] from the validated TLS config.
+fn build_tls_acceptor(tls: &TlsConfig) -> Result<SslAcceptor> {
+    let mut builder = SslAcceptor::mozilla_intermediate_v5(SslMethod::tls())?;
+    builder.set_certificate_chain_file(&tls.cert_path)?;
+    builder.set_private_key_file(&tls.key_path, SslFiletype::PEM)?;
+    Ok(builder.build())
 }
 
 /// Wait for a shutdown signal (`SIGTERM` or `SIGINT`).
