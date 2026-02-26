@@ -125,7 +125,7 @@ fn main() {
     {
         let backend = SquashfsFileBackend::open(SQSH_DEFAULT_PATH)
             .expect("failed to open squashfs archive");
-        let template_env = server::build_template_env_squashfs(backend.reader());
+        let template_env = server::build_template_env_squashfs(backend.reader(), config.content_encoding);
         match rt.block_on(server::run(config, backend, template_env)) {
             Ok(()) => {}
             Err(_) => handle_error(MelError::ServerFailed),

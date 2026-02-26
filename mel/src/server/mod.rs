@@ -60,7 +60,7 @@ use hyper_util::rt::TokioIo;
 use openssl::ssl::{Ssl, SslAcceptor, SslFiletype, SslMethod};
 use tower_service::Service;
 
-use config::{ServerConfig, TlsConfig};
+use config::{ContentEncoding, ServerConfig, TlsConfig};
 use file_backend::FileBackend;
 use handlers::{
     docs_redirect, parse_pmap, plc_api, security_data_csaf, security_data_cve, serve_static,
@@ -216,6 +216,19 @@ async fn shutdown_signal() {
     }
 }
 
+/// Try to gunzip a byte buffer; if it isn't valid gzip, return the original bytes unchanged.
+/// Used by template loaders where some files (HTML) are pre-gzipped but others (CSS, JS) are not.
+fn gunzip_lossy(buf: &[u8]) -> Vec<u8> {
+    use flate2::read::GzDecoder;
+    use std::io::Read;
+    let mut decoder = GzDecoder::new(buf);
+    let mut out = Vec::new();
+    match decoder.read_to_end(&mut out) {
+        Ok(_) => out,
+        Err(_) => buf.to_vec(),
+    }
+}
+
 /// Configure MiniJinja syntax (custom delimiters, no auto-escaping).
 fn configure_syntax(env: &mut minijinja::Environment<'_>) {
     env.set_syntax(
@@ -237,16 +250,25 @@ pub(crate) fn build_template_env_filesystem(config: &ServerConfig) -> minijinja:
     configure_syntax(&mut env);
 
     let webroot = config.webroot.clone();
+    let precompressed = config.content_encoding == ContentEncoding::Precompressed;
     env.set_loader(move |name: &str| {
         let path = std::path::Path::new(&webroot).join(name.trim_start_matches('/'));
-        match std::fs::read_to_string(&path) {
-            Ok(s) => Ok(Some(s)),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-            Err(e) => Err(minijinja::Error::new(
-                minijinja::ErrorKind::InvalidOperation,
-                format!("failed to read {}: {e}", path.display()),
-            )),
-        }
+        let buf = match std::fs::read(&path) {
+            Ok(b) => b,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => {
+                return Err(minijinja::Error::new(
+                    minijinja::ErrorKind::InvalidOperation,
+                    format!("failed to read {}: {e}", path.display()),
+                ))
+            }
+        };
+        let bytes = if precompressed {
+            gunzip_lossy(&buf)
+        } else {
+            buf
+        };
+        Ok(Some(String::from_utf8_lossy(&bytes).into_owned()))
     });
 
     env
@@ -257,10 +279,12 @@ pub(crate) fn build_template_env_filesystem(config: &ServerConfig) -> minijinja:
 #[cfg(feature = "squashfs")]
 pub(crate) fn build_template_env_squashfs(
     reader: std::sync::Arc<backhand::FilesystemReader<'static>>,
+    content_encoding: ContentEncoding,
 ) -> minijinja::Environment<'static> {
     let mut env = minijinja::Environment::new();
     configure_syntax(&mut env);
 
+    let precompressed = content_encoding == ContentEncoding::Precompressed;
     env.set_loader(move |name: &str| {
         let normalized = if name.starts_with('/') {
             name.to_string()
@@ -285,7 +309,12 @@ pub(crate) fn build_template_env_squashfs(
                         format!("failed to read {normalized} from squashfs: {e}"),
                     )
                 })?;
-                Ok(Some(String::from_utf8_lossy(&buf).into_owned()))
+                let bytes = if precompressed {
+                    gunzip_lossy(&buf)
+                } else {
+                    buf
+                };
+                Ok(Some(String::from_utf8_lossy(&bytes).into_owned()))
             }
             _ => Ok(None),
         }
