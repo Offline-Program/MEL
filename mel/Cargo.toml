@@ -34,10 +34,11 @@ hyper = { version = "1", features = ["http1", "server"] }
 hyper-util = { version = "0.1", features = ["tokio", "server"] }
 tower-service = "0.3"
 backhand = { version = "0.25", features = ["zstd"], optional = true }
+memmap2 = { version = "0.9", optional = true }
 
 [features]
 default = []
-squashfs = ["dep:backhand"]
+squashfs = ["dep:backhand", "dep:memmap2"]
 
 [build-dependencies]
 mel_libs = { path = "../mel_libs/" }

@@ -116,12 +116,15 @@ pub(crate) struct SquashfsFileBackend {
 impl SquashfsFileBackend {
     /// Open a squashfs archive at `path`.
     ///
-    /// The file is read into memory so the `FilesystemReader` owns a `'static` buffer,
-    /// allowing it to be shared across threads via `Arc`.
+    /// The file is memory-mapped so the OS pages in data on demand rather than
+    /// loading the entire archive into heap memory.
     pub(crate) fn open(path: &str) -> Result<Self> {
         eprintln!("Opening squashfs archive: {path}");
-        let data = std::fs::read(path)?;
-        let cursor = std::io::Cursor::new(data);
+        let file = std::fs::File::open(path)?;
+        // SAFETY: the archive is a read-only file baked into the container image;
+        // it will not be modified or truncated while the process is running.
+        let mmap = unsafe { memmap2::Mmap::map(&file)? };
+        let cursor = std::io::Cursor::new(mmap);
         let reader = backhand::FilesystemReader::from_reader(cursor)?;
 
         let file_count = reader
