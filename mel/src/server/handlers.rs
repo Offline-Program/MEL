@@ -331,9 +331,14 @@ pub(crate) async fn serve_static<F: FileBackend>(
     let is_html = path.ends_with(".html");
     let is_json = path.ends_with(".json");
     let client_accepts_gzip = accepts_gzip(&req_headers);
-    // Fetch raw bytes from the backend.
+    // Fetch raw bytes from the backend.  If the path doesn't end with `/` and
+    // isn't found, 302 redirect to `path/` so the next request resolves via the
+    // trailing-slash → index.html logic above.
     let file = match state.backend.get(&path).await {
         Ok(Some(f)) => f,
+        Ok(None) if !raw_path.ends_with('/') => {
+            return Redirect::temporary(&format!("{raw_path}/")).into_response();
+        }
         Ok(None) => return serve_not_found(&state, raw_path).await,
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     };
