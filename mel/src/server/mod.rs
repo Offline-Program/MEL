@@ -37,9 +37,13 @@
 //! | `/hydra/rest/securitydata/cve.json` | [`handlers::security_data_cve`] |
 //! | `/*` (catch-all) | [`handlers::serve_static`] |
 
+#[allow(dead_code)]
+pub(crate) mod caching_backend;
 pub(crate) mod config;
 pub(crate) mod file_backend;
 pub(crate) mod handlers;
+#[allow(dead_code)]
+pub(crate) mod streaming_backend;
 
 use std::pin::Pin;
 use std::sync::Arc;
@@ -68,7 +72,14 @@ use minijinja::syntax::SyntaxConfig;
 ///
 /// The server shuts down gracefully on `SIGTERM` or `SIGINT`, finishing in-flight requests before
 /// exiting.
-pub(crate) async fn run<F: FileBackend>(config: ServerConfig, backend: F) -> Result<()> {
+///
+/// The `template_env` is built by the caller because the MiniJinja loader depends on the
+/// backend type (filesystem vs squashfs).
+pub(crate) async fn run<F: FileBackend>(
+    config: ServerConfig,
+    backend: F,
+    template_env: minijinja::Environment<'static>,
+) -> Result<()> {
     let http_client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
         .build()?;
@@ -80,8 +91,6 @@ pub(crate) async fn run<F: FileBackend>(config: ServerConfig, backend: F) -> Res
             std::collections::HashMap::new()
         }
     };
-
-    let template_env = build_template_env(&config);
 
     let tls_config = config.tls.clone();
 
@@ -207,11 +216,8 @@ async fn shutdown_signal() {
     }
 }
 
-/// Build a MiniJinja [`Environment`](minijinja::Environment) with custom delimiters and a
-/// filesystem loader rooted at the webroot.
-fn build_template_env(config: &ServerConfig) -> minijinja::Environment<'static> {
-    let mut env = minijinja::Environment::new();
-
+/// Configure MiniJinja syntax (custom delimiters, no auto-escaping).
+fn configure_syntax(env: &mut minijinja::Environment<'_>) {
     env.set_syntax(
         SyntaxConfig::builder()
             .block_delimiters("#%", "%#")
@@ -220,8 +226,15 @@ fn build_template_env(config: &ServerConfig) -> minijinja::Environment<'static> 
             .build()
             .expect("invalid MiniJinja syntax config"),
     );
-
     env.set_auto_escape_callback(|_| minijinja::AutoEscape::None);
+}
+
+/// Build a MiniJinja [`Environment`](minijinja::Environment) with a filesystem loader
+/// rooted at the webroot.
+#[cfg(not(feature = "squashfs"))]
+pub(crate) fn build_template_env_filesystem(config: &ServerConfig) -> minijinja::Environment<'static> {
+    let mut env = minijinja::Environment::new();
+    configure_syntax(&mut env);
 
     let webroot = config.webroot.clone();
     env.set_loader(move |name: &str| {
@@ -233,6 +246,48 @@ fn build_template_env(config: &ServerConfig) -> minijinja::Environment<'static> 
                 minijinja::ErrorKind::InvalidOperation,
                 format!("failed to read {}: {e}", path.display()),
             )),
+        }
+    });
+
+    env
+}
+
+/// Build a MiniJinja [`Environment`](minijinja::Environment) with a loader that reads
+/// templates from a squashfs archive.
+#[cfg(feature = "squashfs")]
+pub(crate) fn build_template_env_squashfs(
+    reader: std::sync::Arc<backhand::FilesystemReader<'static>>,
+) -> minijinja::Environment<'static> {
+    let mut env = minijinja::Environment::new();
+    configure_syntax(&mut env);
+
+    env.set_loader(move |name: &str| {
+        let normalized = if name.starts_with('/') {
+            name.to_string()
+        } else {
+            format!("/{name}")
+        };
+
+        let search_path = std::path::Path::new(&normalized);
+        let nodes = &reader.root.nodes;
+        let idx = match nodes.binary_search_by(|n| n.fullpath.as_path().cmp(search_path)) {
+            Ok(i) => i,
+            Err(_) => return Ok(None),
+        };
+
+        match &nodes[idx].inner {
+            backhand::InnerNode::File(file) => {
+                let mut sqsh_reader = reader.file(file).reader();
+                let mut buf = Vec::new();
+                std::io::Read::read_to_end(&mut sqsh_reader, &mut buf).map_err(|e| {
+                    minijinja::Error::new(
+                        minijinja::ErrorKind::InvalidOperation,
+                        format!("failed to read {normalized} from squashfs: {e}"),
+                    )
+                })?;
+                Ok(Some(String::from_utf8_lossy(&buf).into_owned()))
+            }
+            _ => Ok(None),
         }
     });
 

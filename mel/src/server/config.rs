@@ -49,6 +49,7 @@ pub(crate) struct ServerConfig {
     /// The socket address the server will bind to.
     pub(crate) bind_addr: SocketAddr,
     /// The root directory from which static files are served.
+    #[cfg(not(feature = "squashfs"))]
     pub(crate) webroot: String,
     /// The URL of the Solr instance to proxy search requests to.
     pub(crate) solr_url: String,
@@ -91,6 +92,7 @@ impl ServerConfig {
 
         let bind_addr = SocketAddr::from(([0, 0, 0, 0], port));
 
+        #[cfg(not(feature = "squashfs"))]
         let webroot = std::env::var("MIMIR_WEBROOT")
             .unwrap_or_else(|_| "/var/www/html".to_string());
 
@@ -120,6 +122,7 @@ impl ServerConfig {
 
         Self {
             bind_addr,
+            #[cfg(not(feature = "squashfs"))]
             webroot,
             solr_url,
             content_encoding,

@@ -33,6 +33,11 @@ tokio-openssl = "0.6"
 hyper = { version = "1", features = ["http1", "server"] }
 hyper-util = { version = "0.1", features = ["tokio", "server"] }
 tower-service = "0.3"
+backhand = { version = "0.25", features = ["zstd"], optional = true }
+
+[features]
+default = []
+squashfs = ["dep:backhand"]
 
 [build-dependencies]
 mel_libs = { path = "../mel_libs/" }

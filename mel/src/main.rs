@@ -30,7 +30,11 @@ use error::MelError;
 use mel_libs::access_key::AccessKey;
 use mel_libs::crypt::{create_kek, dec, iv, AESParam};
 use mel_libs::token_map::{InvalidTokenMap, TokenMap};
-use server::{config::ServerConfig, file_backend::LocalFileBackend};
+use server::config::ServerConfig;
+#[cfg(not(feature = "squashfs"))]
+use server::file_backend::LocalFileBackend;
+#[cfg(feature = "squashfs")]
+use server::file_backend::{SquashfsFileBackend, SQSH_DEFAULT_PATH};
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::OnceLock;
@@ -113,13 +117,29 @@ fn main() {
     if is_encrypted() && mak_missing {
         config.missing_access_key = true;
     }
-    let backend = LocalFileBackend::new(&config.webroot);
 
     // Run the async Axum server on the current thread's tokio runtime.
     let rt = tokio::runtime::Runtime::new().expect("failed to create tokio runtime");
-    match rt.block_on(server::run(config, backend)) {
-        Ok(()) => {}
-        Err(_) => handle_error(MelError::ServerFailed),
+
+    #[cfg(feature = "squashfs")]
+    {
+        let backend = SquashfsFileBackend::open(SQSH_DEFAULT_PATH)
+            .expect("failed to open squashfs archive");
+        let template_env = server::build_template_env_squashfs(backend.reader());
+        match rt.block_on(server::run(config, backend, template_env)) {
+            Ok(()) => {}
+            Err(_) => handle_error(MelError::ServerFailed),
+        }
+    }
+
+    #[cfg(not(feature = "squashfs"))]
+    {
+        let backend = LocalFileBackend::new(&config.webroot);
+        let template_env = server::build_template_env_filesystem(&config);
+        match rt.block_on(server::run(config, backend, template_env)) {
+            Ok(()) => {}
+            Err(_) => handle_error(MelError::ServerFailed),
+        }
     }
 }
 
