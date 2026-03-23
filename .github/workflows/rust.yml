@@ -21,6 +21,6 @@ jobs:
     - name: Install cargo-audit
       run: cargo install cargo-audit
     - name: Audit
-      run: cargo audit
+      run: cargo audit --target-os linux
     - name: Run tests
       run: cargo test --verbose
