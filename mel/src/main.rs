@@ -74,10 +74,8 @@ fn main() {
         }
     });
 
-    // launch solr (in the background) if decryption was successful
-    if (is_encrypted() && dek.is_some()) || !is_encrypted() {
-        start_solr();
-    }
+    // launch solr (in the background)
+    start_solr();
 
     // launch httpd, with optional dek
     match start_httpd(dek) {
@@ -220,12 +218,10 @@ fn decrypt_solr(dek: &str, iv: &str) -> io::Result<()> {
     if status.success() {
         Ok(())
     } else {
-        Err(io::Error::other(
-            format!(
-                "OpenSSL decryption failed with exit code: {:?}",
-                status.code()
-            ),
-        ))
+        Err(io::Error::other(format!(
+            "OpenSSL decryption failed with exit code: {:?}",
+            status.code()
+        )))
     }
 }
 
@@ -239,12 +235,10 @@ fn unpack_solr_tar_gz() -> io::Result<()> {
     if status.success() {
         Ok(())
     } else {
-        Err(io::Error::other(
-            format!(
-                "Solr tar extraction failed with exit code: {:?}",
-                status.code()
-            ),
-        ))
+        Err(io::Error::other(format!(
+            "Solr tar extraction failed with exit code: {:?}",
+            status.code()
+        )))
     }
 }
 
