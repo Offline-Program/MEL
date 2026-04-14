@@ -25,7 +25,7 @@ use std::fmt::Display;
 /// When debugging a deployed Mimir error message, use the error code to identify the error
 /// condition.
 #[derive(Debug, PartialEq)]
-pub(crate) enum MelError {
+pub enum MelError {
     /// User didn't provide an access key.
     AccessKeyMissing,
     /// User's access key has an invalid/unparsable format.  For example, it may be missing
@@ -59,6 +59,14 @@ pub(crate) enum MelError {
     MimirTokenMapEmpty,
     /// The TokenMap file has very few records.  Treated as a warning.
     MimirTokenMapMeager,
+    /// An inference URL was provided while the chat assistant is not enabled.
+    InferenceUrlNoAssistant,
+    /// Inference URL was provided but is not a valid URL.
+    InferenceUrlInvalid,
+    /// Error initializing the inference.json file.
+    InferenceUrlWrite,
+    /// OFFLINE_VIRTUAL_ASSISTANT is set to "true" but no inference URL was provided.
+    AssistantNoInferenceUrl,
 }
 
 impl MelError {
@@ -82,7 +90,11 @@ impl MelError {
             MelError::SolrUnpackFailed          => "ERR_013: Failed to unpack the solr index archive.",
             MelError::AccessKeyInvalidBindHash  => "ERR_014: ACCESS_KEY could not be validated.",
             MelError::MimirTokenMapEmpty        => "ERR_015: RHOKP image contains no token data.",
-            MelError::MimirTokenMapMeager       => "ERR_016: RHOKP image contains very little token data."
+            MelError::MimirTokenMapMeager       => "ERR_016: RHOKP image contains very little token data.",
+            MelError::InferenceUrlNoAssistant   => "ERR_017: INFERENCE_URL was provided but OFFLINE_VIRTUAL_ASSISTANT is not enabled.",
+            MelError::InferenceUrlInvalid       => "ERR_018: The provided INFERENCE_URL value is not a valid URL.",
+            MelError::InferenceUrlWrite         => "ERR_019: Could not write inference.json to webroot.",
+            MelError::AssistantNoInferenceUrl   => "ERR_020: OFFLINE_VIRTUAL_ASSISTANT is enabled but INFERENCE_URL was not provided.",
         }
     }
 
@@ -111,6 +123,10 @@ impl MelError {
             MelError::AccessKeyInvalidBindHash  => DOUBLE_CHECK_MAK,
             MelError::MimirTokenMapEmpty        => NEW_IMAGE_OR_SUPPORT,
             MelError::MimirTokenMapMeager       => NEW_IMAGE_OR_SUPPORT,
+            MelError::InferenceUrlNoAssistant   => "When launching the container, provide the following environment variable: OFFLINE_VIRTUAL_ASSISTANT=true",
+            MelError::InferenceUrlInvalid       => "Ensure the provided value is a valid URL.",
+            MelError::InferenceUrlWrite         => NEW_IMAGE_OR_SUPPORT,
+            MelError::AssistantNoInferenceUrl   => "Provide an environment variable, INFERENCE_URL='<url>' where <url> points to a Lightspeed Stack instance.",
         }
     }
 }
