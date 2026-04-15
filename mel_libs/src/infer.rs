@@ -60,9 +60,7 @@ pub fn init_inference() -> Result<(), MelError> {
         assistant_enabled(),
         inference_url().map_err(|_| MelError::InferenceUrlInvalid)?,
     ) {
-        (true, Some(url)) => {
-            write_inference_url(url, Path::new("/var/www/html/virtual-assistant/api/"))
-        }
+        (true, Some(url)) => write_inference_url(url, Path::new("/opt/app-root/src/")),
         (false, Some(_)) => Err(MelError::InferenceUrlNoAssistant),
         (true, None) => Err(MelError::AssistantNoInferenceUrl),
         (_, None) => Ok(()),
