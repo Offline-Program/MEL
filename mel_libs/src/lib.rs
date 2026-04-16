@@ -17,7 +17,7 @@
 //! Encryption and access key libraries for Mimir Encrypted Launcher.
 
 pub mod access_key;
-pub mod assistant;
+pub mod ask;
 pub mod crypt;
 pub mod error;
 pub mod infer;
