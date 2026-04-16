@@ -23,11 +23,11 @@
 
 #[macro_use]
 mod debug;
-mod error;
 
-use error::MelError;
 use mel_libs::access_key::AccessKey;
 use mel_libs::crypt::{create_kek, dec, iv, AESParam};
+use mel_libs::error::MelError;
+use mel_libs::infer::init_inference;
 use mel_libs::token_map::{InvalidTokenMap, TokenMap};
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -74,6 +74,12 @@ fn main() {
         }
     });
 
+    // initialize inference, if enabled
+    match init_inference() {
+        Ok(_) => {}
+        Err(err) => handle_error(err),
+    }
+
     // launch solr (in the background)
     start_solr();
 
@@ -88,7 +94,7 @@ fn main() {
 /// avoid hinting at how to get around the encryption barrier, but they contain a numeric error
 /// code that can be compared to MelError source code to determine a more detailed reason for
 /// failure.
-fn handle_error(err: error::MelError) -> ! {
+fn handle_error(err: MelError) -> ! {
     eprintln!("{err}");
     process::exit(1);
 }
@@ -97,7 +103,7 @@ fn handle_error(err: error::MelError) -> ! {
 struct Dek(String);
 
 /// If encryption is enabled, attempt to decrypt the user's EDEK to produce the DEK.
-fn decrypt_if_needed() -> Result<Option<Dek>, error::MelError> {
+fn decrypt_if_needed() -> Result<Option<Dek>, MelError> {
     if is_encrypted() {
         debug_println!("MEL: Your Mimir image is encrypted.");
         decrypt_edek().map(Some)
@@ -113,7 +119,7 @@ fn is_encrypted() -> bool {
 }
 
 /// Attempt to decrypt the EDEK.
-fn decrypt_edek() -> Result<Dek, error::MelError> {
+fn decrypt_edek() -> Result<Dek, MelError> {
     let access_key = ACCESS_KEY
         .get()
         .unwrap(/* safe while ACCESS_KEY is init'd at the beginning of main */)
@@ -124,11 +130,9 @@ fn decrypt_edek() -> Result<Dek, error::MelError> {
 
     let mak = AccessKey::try_from(access_key.as_str()).map_err(|e| match e {
         mel_libs::access_key::InvalidAccessKey::MissingComponents => {
-            error::MelError::AccessKeyInvalidFormat
+            MelError::AccessKeyInvalidFormat
         }
-        mel_libs::access_key::InvalidAccessKey::BadHash => {
-            error::MelError::AccessKeyInvalidBindHash
-        }
+        mel_libs::access_key::InvalidAccessKey::BadHash => MelError::AccessKeyInvalidBindHash,
     })?;
 
     debug_println!("MEL: Your parsed ACCESS_KEY is {:?}", mak);
@@ -140,7 +144,7 @@ fn decrypt_edek() -> Result<Dek, error::MelError> {
     debug_println!("MEL: MIMIR_SALT {}", mel_libs::crypt::get_salt_hex());
 
     let tm = TokenMap::load(Path::new(TOKENS_TSV_PATH))
-        .map_err(|_| error::MelError::MimirTokenMapUnreadable)?;
+        .map_err(|_| MelError::MimirTokenMapUnreadable)?;
 
     // Check the validity of the TokenMap data.  If it's empty, error and bail out.  If it has only
     // a few records, print a warning and continue.
@@ -148,7 +152,7 @@ fn decrypt_edek() -> Result<Dek, error::MelError> {
         match err {
             InvalidTokenMap::Meager { .. } => {
                 debug_println!("MEL: TokenMap has very few records: {err:?}");
-                eprintln!("{}", error::MelError::MimirTokenMapMeager);
+                eprintln!("{}", MelError::MimirTokenMapMeager);
             }
             InvalidTokenMap::Empty => {
                 return Err(MelError::MimirTokenMapEmpty);
@@ -159,16 +163,16 @@ fn decrypt_edek() -> Result<Dek, error::MelError> {
     let edek = tm
         .get(&mak.get_token().hash())
         .cloned()
-        .ok_or(error::MelError::TokenMissing)?
-        .ok_or(error::MelError::EdekMissing)?;
+        .ok_or(MelError::TokenMissing)?
+        .ok_or(MelError::EdekMissing)?;
 
     debug_println!("MEL: Your EDEK is {}", edek.as_hex());
 
-    let kek = create_kek(&mak.get_token().to_string()).ok_or(error::MelError::KekCreationFailed)?;
+    let kek = create_kek(&mak.get_token().to_string()).ok_or(MelError::KekCreationFailed)?;
 
-    let dek = dec(&kek, edek.data()).map_err(|_| error::MelError::EdekDecryptionFailed)?;
+    let dek = dec(&kek, edek.data()).map_err(|_| MelError::EdekDecryptionFailed)?;
 
-    let dek = AESParam::new(&dek).map_err(|_| error::MelError::DecryptedDekWrongSize)?;
+    let dek = AESParam::new(&dek).map_err(|_| MelError::DecryptedDekWrongSize)?;
 
     debug_println!("MEL: Your DEK is {}", dek.as_hex());
 
@@ -177,13 +181,13 @@ fn decrypt_edek() -> Result<Dek, error::MelError> {
         debug_println!("decrypting solr data");
 
         decrypt_solr(dek.as_hex(), iv().as_hex())
-            .map_err(|_| error::MelError::SolrIndexDecryptionFailed)?;
+            .map_err(|_| MelError::SolrIndexDecryptionFailed)?;
 
         debug_println!("solr index decrypted");
 
         debug_println!("unpacking solr index tar file");
 
-        unpack_solr_tar_gz().map_err(|_e| error::MelError::SolrUnpackFailed)?;
+        unpack_solr_tar_gz().map_err(|_e| MelError::SolrUnpackFailed)?;
 
         debug_println!("solr index unpacked");
 
@@ -191,7 +195,7 @@ fn decrypt_edek() -> Result<Dek, error::MelError> {
     } else if Path::new(SOLR_PORTAL_PATH).exists() {
         debug_println!("using previously unpacked solr index");
     } else {
-        return Err(error::MelError::SolrIndexNotFound);
+        return Err(MelError::SolrIndexNotFound);
     }
 
     Ok(Dek(dek.as_hex().to_string()))
@@ -254,7 +258,7 @@ fn clean_up() {
 }
 
 /// Start Apache httpd.  Returns Err if the process spawning fails for any reason.
-fn start_httpd(enc_input: Option<Dek>) -> Result<std::process::ExitStatus, error::MelError> {
+fn start_httpd(enc_input: Option<Dek>) -> Result<std::process::ExitStatus, MelError> {
     // Start HTTPD in the foreground
     let mut httpd_cmd = Command::new("run-httpd");
 
@@ -275,9 +279,9 @@ fn start_httpd(enc_input: Option<Dek>) -> Result<std::process::ExitStatus, error
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
         .spawn()
-        .map_err(|_e| error::MelError::HttpdProcessFailed)?
+        .map_err(|_e| MelError::HttpdProcessFailed)?
         .wait()
-        .map_err(|_e| error::MelError::HttpdProcessFailed)
+        .map_err(|_e| MelError::HttpdProcessFailed)
 }
 
 /// Print a missing MAK warning with remediation instructions, and a slow countdown before
