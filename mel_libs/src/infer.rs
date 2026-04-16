@@ -18,7 +18,6 @@
 
 use crate::ask::ask_enabled;
 use crate::error::MelError;
-use serde::Serialize;
 use std::{env::VarError, fs, path::Path, sync::OnceLock};
 use url::Url;
 
@@ -50,20 +49,11 @@ pub fn inference_url() -> Result<&'static Option<Url>, &'static MelError> {
         .as_ref()
 }
 
-/// A struct representing the inference.json file that is written into the container's default
-/// user's homedir, so that Ask Red Hat Offline can know what inference server to talk to.
-#[derive(Serialize)]
-struct Inference<'a> {
-    /// The URL of the Lightspeed Stack (or other) inference server.
-    url: &'a Url,
-}
-
 /// Write a JSON file containing the inference URL into the `base_path`, for Ask Red Hat Offline to
 /// read.
 fn write_inference_url(url: &Url, base_path: &Path) -> Result<(), MelError> {
-    let inf = Inference { url };
     let inference_url_json_path = base_path.join("inference.json");
-    let json = serde_json::to_string_pretty(&inf).map_err(|_e| MelError::InferenceUrlWrite)?;
+    let json = format!("{{\n  \"url\": \"{}\"\n}}\n", url.as_str());
     fs::write(inference_url_json_path, json).map_err(|_e| MelError::InferenceUrlWrite)?;
     Ok(())
 }
