@@ -67,7 +67,7 @@ pub fn init_inference() -> Result<(), MelError> {
         Err(e) => return Err(*e),
     };
     match (ask_enabled(), inf_url) {
-        (true, Some(url)) => write_inference_url(url, Path::new("/opt/app-root/src/")),
+        (true, Some(url)) => write_inference_url(url, Path::new("/opt/okp/")),
         (false, Some(_)) => Err(MelError::InferenceUrlButNoAsk),
         (true, None) => Err(MelError::AskButNoInferenceUrl),
         (false, None) => Ok(()),
