@@ -24,6 +24,7 @@
 #[macro_use]
 mod debug;
 
+use flate2::read::GzDecoder;
 use mel_libs::access_key::AccessKey;
 use mel_libs::crypt::{create_kek, dec, iv, AESParam};
 use mel_libs::error::MelError;
@@ -35,6 +36,7 @@ use std::sync::OnceLock;
 use std::time::Duration;
 use std::{env, io};
 use std::{fs, process};
+use tar::Archive;
 
 /// The location of the solr index in encrypted builds.
 const ENCRYPTED_SOLR_INDEX_PATH: &str = "/opt/solr/server/solr/portal/data.tar.gz.enc";
@@ -45,6 +47,17 @@ const SOLR_PORTAL_PATH: &str = "/opt/solr/server/solr/portal";
 /// The path inside the final image to the tokens tsv file.  This file is created by MOE and copied
 /// into the image in Containerfile.main.
 const TOKENS_TSV_PATH: &str = "/opt/tokens";
+
+/// Path to the solr start/status binary.
+const SOLR_BIN: &str = "/opt/solr/bin/solr";
+/// Directory where solr writes log files.
+const SOLR_LOGS_DIR: &str = "/opt/solr/server/logs";
+/// URL used to check solr health status.
+const SOLR_STATUS_URL: &str = "http://127.0.0.1:8983";
+/// Default JVM heap allocation for solr when SOLR_MEM is not set.
+const SOLR_DEFAULT_MEM: &str = "1g";
+/// Interval between solr health checks.
+const SOLR_HEALTH_CHECK_INTERVAL: Duration = Duration::from_secs(60);
 
 /// The string form of the ACCESS_KEY passed in when launching Mimir.
 static ACCESS_KEY: OnceLock<Option<String>> = OnceLock::new();
@@ -180,7 +193,7 @@ fn decrypt_edek() -> Result<Dek, MelError> {
     if Path::new(ENCRYPTED_SOLR_INDEX_PATH).exists() {
         debug_println!("decrypting solr data");
 
-        decrypt_solr(dek.as_hex(), iv().as_hex())
+        decrypt_solr(&dek)
             .map_err(|_| MelError::SolrIndexDecryptionFailed)?;
 
         debug_println!("solr index decrypted");
@@ -201,49 +214,25 @@ fn decrypt_edek() -> Result<Dek, MelError> {
     Ok(Dek(dek.as_hex().to_string()))
 }
 
-/// Attempt to decrypt the solr index.
-fn decrypt_solr(dek: &str, iv: &str) -> io::Result<()> {
-    let status = Command::new("openssl")
-        .args([
-            "enc",
-            "-aes-128-ctr",
-            "-d",
-            "-in",
-            ENCRYPTED_SOLR_INDEX_PATH,
-            "-out",
-            DECRYPTED_SOLR_INDEX_PATH,
-            "-K",
-            dek,
-            "-iv",
-            iv,
-        ])
-        .status()?;
-
-    if status.success() {
-        Ok(())
-    } else {
-        Err(io::Error::other(format!(
-            "OpenSSL decryption failed with exit code: {:?}",
-            status.code()
-        )))
-    }
+/// Attempt to decrypt the solr index.  Reads the encrypted file, decrypts via AES-128-CTR using
+/// the DEK, and writes the plaintext to `DECRYPTED_SOLR_INDEX_PATH`.
+///
+/// Returns `Err` if the file cannot be read, decryption fails, or the output cannot be written.
+fn decrypt_solr(dek: &AESParam) -> io::Result<()> {
+    let ciphertext = fs::read(ENCRYPTED_SOLR_INDEX_PATH)?;
+    let plaintext = dec(dek, &ciphertext)
+        .map_err(|e| io::Error::other(format!("AES decryption failed: {e}")))?;
+    fs::write(DECRYPTED_SOLR_INDEX_PATH, plaintext)
 }
 
-/// Extract the decrypted solr tarball.
+/// Extract the decrypted solr tarball into the solr portal directory.
+///
+/// Returns `Err` if the tarball cannot be opened or extraction fails.
 fn unpack_solr_tar_gz() -> io::Result<()> {
-    let status = Command::new("tar")
-        .args(["-xzv", "-f", DECRYPTED_SOLR_INDEX_PATH])
-        .current_dir(SOLR_PORTAL_PATH)
-        .status()?;
-
-    if status.success() {
-        Ok(())
-    } else {
-        Err(io::Error::other(format!(
-            "Solr tar extraction failed with exit code: {:?}",
-            status.code()
-        )))
-    }
+    let tar_gz = fs::File::open(DECRYPTED_SOLR_INDEX_PATH)?;
+    let decoder = GzDecoder::new(tar_gz);
+    let mut archive = Archive::new(decoder);
+    archive.unpack(SOLR_PORTAL_PATH)
 }
 
 /// clean up the solr encrypted index and the decrypted tarball
@@ -257,10 +246,12 @@ fn clean_up() {
     }
 }
 
-/// Start Apache httpd.  Returns Err if the process spawning fails for any reason.
+/// Start Apache httpd in the foreground.  Blocks until httpd exits.
+///
+/// Returns `Err(MelError::HttpdProcessFailed)` if the process cannot be spawned or wait fails.
 fn start_httpd(enc_input: Option<Dek>) -> Result<std::process::ExitStatus, MelError> {
-    // Start HTTPD in the foreground
-    let mut httpd_cmd = Command::new("run-httpd");
+    let mut httpd_cmd = Command::new("/usr/bin/httpd");
+    httpd_cmd.arg("-DFOREGROUND");
 
     let mak_missing =
         ACCESS_KEY.get().unwrap(/* safe while it's init'd at the beginning of main */).is_none();
@@ -301,22 +292,54 @@ fn missing_mak_slow_warn() {
     eprintln!("launch.");
 }
 
-/// Launch solr in the background.  Errors will not be returned but will be printed to stderr.
+/// Spawn solr and wait for it to exit.  Returns true if solr started and exited (regardless of
+/// exit code), false if it failed to spawn.
+fn spawn_solr(mem: &str) -> bool {
+    match Command::new(SOLR_BIN)
+        .args(["start", "--user-managed", "--force", "-m", mem])
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .spawn()
+    {
+        Ok(mut child) => {
+            let _ = child.wait();
+            true
+        }
+        Err(_) => {
+            eprintln!("{}", MelError::SolrProcessFailed);
+            false
+        }
+    }
+}
+
+/// Check if solr is responding.
+fn solr_is_healthy() -> bool {
+    Command::new(SOLR_BIN)
+        .args(["status", "--solr-url", SOLR_STATUS_URL])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success())
+}
+
+/// Launch solr in a background thread with health monitoring.  If solr stops responding,
+/// it will be restarted automatically.
 fn start_solr() {
-    // Start solr in the background
     std::thread::spawn(|| {
-        match Command::new("run-solr")
-            .stdout(Stdio::inherit())
-            .stderr(Stdio::inherit())
-            .spawn()
-        {
-            Ok(mut child) => {
-                if let Err(_e) = child.wait() {
-                    eprintln!("{}", MelError::SolrProcessFailed);
-                }
-            }
-            Err(_e) => {
-                eprintln!("{}", MelError::SolrProcessFailed);
+        let _ = fs::create_dir_all(SOLR_LOGS_DIR);
+
+        let mem = env::var("SOLR_MEM").unwrap_or_else(|_| SOLR_DEFAULT_MEM.to_string());
+
+        if !spawn_solr(&mem) {
+            return;
+        }
+
+        loop {
+            std::thread::sleep(SOLR_HEALTH_CHECK_INTERVAL);
+
+            if !solr_is_healthy() {
+                eprintln!("Solr is not running, restarting");
+                spawn_solr(&mem);
             }
         }
     });
