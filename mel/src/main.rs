@@ -31,6 +31,7 @@ use mel_libs::error::MelError;
 use mel_libs::infer::init_inference;
 use mel_libs::token_map::{InvalidTokenMap, TokenMap};
 use std::path::Path;
+use std::net::{SocketAddr, TcpStream};
 use std::process::{Command, Stdio};
 use std::sync::OnceLock;
 use std::time::Duration;
@@ -48,16 +49,22 @@ const SOLR_PORTAL_PATH: &str = "/opt/solr/server/solr/portal";
 /// into the image in Containerfile.main.
 const TOKENS_TSV_PATH: &str = "/opt/tokens";
 
-/// Path to the solr start/status binary.
-const SOLR_BIN: &str = "/opt/solr/bin/solr";
+/// Path to the java binary.
+const JAVA_BIN: &str = "/usr/bin/java";
+/// Solr server directory (contains start.jar, etc/, solr-webapp/, solr/).
+const SOLR_SERVER_DIR: &str = "/opt/solr/server";
+/// Solr installation root.
+const SOLR_INSTALL_DIR: &str = "/opt/solr";
 /// Directory where solr writes log files.
 const SOLR_LOGS_DIR: &str = "/opt/solr/server/logs";
-/// URL used to check solr health status.
-const SOLR_STATUS_URL: &str = "http://127.0.0.1:8983";
+/// Port solr listens on.
+const SOLR_PORT: u16 = 8983;
 /// Default JVM heap allocation for solr when SOLR_MEM is not set.
 const SOLR_DEFAULT_MEM: &str = "1g";
 /// Interval between solr health checks.
 const SOLR_HEALTH_CHECK_INTERVAL: Duration = Duration::from_secs(60);
+/// Timeout for TCP health check connections.
+const SOLR_HEALTH_CHECK_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// The string form of the ACCESS_KEY passed in when launching Mimir.
 static ACCESS_KEY: OnceLock<Option<String>> = OnceLock::new();
@@ -292,15 +299,73 @@ fn missing_mak_slow_warn() {
     eprintln!("launch.");
 }
 
-/// Spawn solr and wait for it to exit.  Returns true if solr started and exited (regardless of
-/// exit code), false if it failed to spawn.
+/// Build the Java command to launch Solr directly, bypassing `bin/solr` (which requires bash).
+fn solr_java_cmd(mem: &str) -> Command {
+    let stop_port = (SOLR_PORT - 1000).to_string();
+    let port = SOLR_PORT.to_string();
+    let gc_log =
+        format!("-Xlog:gc*:file={SOLR_LOGS_DIR}/solr_gc.log:time,uptime:filecount=9,filesize=20M");
+    let error_file = format!("-XX:ErrorFile={SOLR_LOGS_DIR}/jvm_crash_%p.log");
+
+    let mut cmd = Command::new(JAVA_BIN);
+    cmd.current_dir(SOLR_SERVER_DIR);
+    cmd.args([
+        "-server",
+        &format!("-Xms{mem}"),
+        &format!("-Xmx{mem}"),
+        // GC tuning (Solr defaults)
+        "-XX:+UseG1GC",
+        "-XX:+PerfDisableSharedMem",
+        "-XX:+ParallelRefProcEnabled",
+        "-XX:MaxGCPauseMillis=250",
+        "-XX:+UseLargePages",
+        "-XX:+AlwaysPreTouch",
+        "-XX:+ExplicitGCInvokesConcurrent",
+        &gc_log,
+        "-Xss256k",
+        // Solr system properties
+        &format!("-Dsolr.port.listen={port}"),
+        &format!("-DSTOP.PORT={stop_port}"),
+        "-DSTOP.KEY=solrrocks",
+        &format!("-Dsolr.logs.dir={SOLR_LOGS_DIR}"),
+        "-Djava.io.tmpdir=/tmp",
+        "-Duser.timezone=UTC",
+        "-XX:-OmitStackTraceInFastThrow",
+        "-XX:+CrashOnOutOfMemoryError",
+        &error_file,
+        &format!("-Djetty.home={SOLR_SERVER_DIR}"),
+        &format!("-Dsolr.solr.home={SOLR_SERVER_DIR}/solr"),
+        &format!("-Dsolr.install.dir={SOLR_INSTALL_DIR}"),
+        &format!("-Dsolr.install.symDir={SOLR_INSTALL_DIR}"),
+        // Security manager (Java 21)
+        "-Djava.security.manager",
+        &format!("-Djava.security.policy={SOLR_SERVER_DIR}/etc/security.policy"),
+        &format!("-Djava.security.properties={SOLR_SERVER_DIR}/etc/security.properties"),
+        "-Dsolr.internal.network.permission=*",
+        // Vector/native access modules
+        "--add-modules",
+        "jdk.incubator.vector",
+        "--enable-native-access=ALL-UNNAMED",
+        // IP ACL (empty = allow all)
+        "-Dsolr.jetty.inetaccess.includes=",
+        "-Dsolr.jetty.inetaccess.excludes=",
+        // Jetty startup
+        "-jar",
+        "start.jar",
+        "--module=http",
+        "--module=requestlog",
+        "--module=gzip",
+        "--module=new-ui",
+    ]);
+    cmd.stdout(Stdio::inherit());
+    cmd.stderr(Stdio::inherit());
+    cmd
+}
+
+/// Spawn solr via direct Java invocation and wait for it to exit.  Returns true if the process
+/// was spawned successfully (regardless of exit code), false if it failed to spawn.
 fn spawn_solr(mem: &str) -> bool {
-    match Command::new(SOLR_BIN)
-        .args(["start", "--user-managed", "--force", "-m", mem])
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .spawn()
-    {
+    match solr_java_cmd(mem).spawn() {
         Ok(mut child) => {
             let _ = child.wait();
             true
@@ -312,14 +377,10 @@ fn spawn_solr(mem: &str) -> bool {
     }
 }
 
-/// Check if solr is responding.
+/// Check if solr is responding by attempting a TCP connection to its port.
 fn solr_is_healthy() -> bool {
-    Command::new(SOLR_BIN)
-        .args(["status", "--solr-url", SOLR_STATUS_URL])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .is_ok_and(|s| s.success())
+    let addr = SocketAddr::from(([127, 0, 0, 1], SOLR_PORT));
+    TcpStream::connect_timeout(&addr, SOLR_HEALTH_CHECK_TIMEOUT).is_ok()
 }
 
 /// Launch solr in a background thread with health monitoring.  If solr stops responding,
