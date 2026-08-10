@@ -1,0 +1,22 @@
+[package]
+name = "mimcp"
+version = "0.1.0"
+edition = "2024"
+description = "MCP server for the Red Hat Offline Knowledge Portal (RHOKP)"
+publish = false
+
+[dependencies]
+rmcp = { version = "2.2", features = ["server", "macros", "transport-streamable-http-server"] }
+reqwest = { version = "0.13", features = ["json"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+schemars = "1.0"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+url = "2.5"
+anyhow = "1.0"
+tracing = "0.1"
+axum = "0.8"
+tokio-util = "0.7"
+tract-onnx = "0.23"
+tokenizers = { version = "0.23", default-features = false, features = ["onig"] }
+again = "0.1"
