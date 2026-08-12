@@ -11,8 +11,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use rmcp::transport::streamable_http_server::{
-    StreamableHttpServerConfig, StreamableHttpService,
-    session::local::LocalSessionManager,
+    session::local::LocalSessionManager, StreamableHttpServerConfig, StreamableHttpService,
 };
 use tokio_util::sync::CancellationToken;
 use url::Url;
@@ -67,10 +66,11 @@ pub async fn mcp_router(config: MimcpConfig) -> Result<axum::Router> {
     };
 
     let routes: &[(&str, ToolSet)] = &[
-        ("/mcp/cves", ToolSet::Cves),
-        ("/mcp/docs", ToolSet::Docs),
-        ("/mcp/errata", ToolSet::Errata),
-        ("/mcp/all", ToolSet::All),
+        // Disabling the other routes so we can focus on the default hybrid search toolset first.  Re-enable the others as our coordination with Lightforge evolves.
+        // ("/mcp/cves", ToolSet::Cves),
+        // ("/mcp/docs", ToolSet::Docs),
+        // ("/mcp/errata", ToolSet::Errata),
+        // ("/mcp/all", ToolSet::All),
         ("/mcp", ToolSet::Default),
     ];
 

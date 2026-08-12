@@ -7,7 +7,7 @@ use rmcp::handler::server::tool::ToolCallContext;
 use rmcp::handler::server::wrapper::{Json, Parameters};
 use rmcp::model::*;
 use rmcp::service::RequestContext;
-use rmcp::{RoleServer, schemars, tool, tool_handler, tool_router, ServerHandler};
+use rmcp::{schemars, tool, tool_handler, tool_router, RoleServer, ServerHandler};
 
 use crate::embed::Embedder;
 use crate::solr::{SolrClient, SolrResponse};
@@ -16,6 +16,8 @@ use crate::solr::{SolrClient, SolrResponse};
 const MAX_ROWS: u32 = 20;
 
 pub mod tool_names {
+    // pub const SEARCH: &str = "search";
+    pub const SEARCH_HYBRID: &str = "search";
     pub const CVE_SEARCH: &str = "cve_search";
     pub const DOCS_SEARCH: &str = "docs_search";
     pub const ERRATA_SEARCH: &str = "errata_search";
@@ -71,9 +73,9 @@ pub struct GetByIdRequest {
 /// Defines which tools an endpoint exposes via `list_tools`.
 #[derive(Clone)]
 pub enum ToolSet {
-    /// All content-type-specific tools.
+    /// Hybrid search only, by default.  This default may change in the future.
     Default,
-    /// All tools (currently same as Default).
+    /// All tools.
     All,
     /// CVE tools only.
     Cves,
@@ -87,7 +89,9 @@ impl ToolSet {
     pub fn allowed_tools(&self) -> &[&str] {
         use tool_names::*;
         match self {
-            Self::Default | Self::All => &[
+            Self::Default => &[SEARCH_HYBRID],
+            Self::All => &[
+                SEARCH_HYBRID,
                 CVE_SEARCH,
                 DOCS_SEARCH,
                 ERRATA_SEARCH,
@@ -103,20 +107,18 @@ impl ToolSet {
     fn instructions(&self) -> String {
         match self {
             Self::Default | Self::All => {
-                "MiMCP provides search access to Red Hat product documentation, \
+                "RHOKP MCP provides search access to Red Hat product documentation, \
                  errata, and CVEs from the Offline Knowledge Portal."
                     .to_owned()
             }
             Self::Cves => {
-                "MiMCP CVE endpoint. Search and retrieve Red Hat CVE records."
-                    .to_owned()
+                "RHOKP MCP CVE endpoint. Search and retrieve Red Hat CVE records.".to_owned()
             }
             Self::Docs => {
-                "MiMCP documentation endpoint. Search Red Hat product documentation."
-                    .to_owned()
+                "RHOKP MCP documentation endpoint. Search Red Hat product documentation.".to_owned()
             }
             Self::Errata => {
-                "MiMCP errata endpoint. Search and retrieve Red Hat errata advisories."
+                "RHOKP MCP errata endpoint. Search and retrieve Red Hat errata advisories."
                     .to_owned()
             }
         }
@@ -226,7 +228,9 @@ impl MimcpServer {
             .await
     }
 
-    #[tool(description = "Search Red Hat product documentation using hybrid semantic and keyword matching.")]
+    #[tool(
+        description = "Search Red Hat product documentation using hybrid semantic and keyword matching."
+    )]
     async fn docs_search(
         &self,
         Parameters(req): Parameters<ContentSearchRequest>,
@@ -235,7 +239,9 @@ impl MimcpServer {
             .await
     }
 
-    #[tool(description = "Search Red Hat errata advisories using hybrid semantic and keyword matching.")]
+    #[tool(
+        description = "Search Red Hat errata advisories using hybrid semantic and keyword matching."
+    )]
     async fn errata_search(
         &self,
         Parameters(req): Parameters<ContentSearchRequest>,
@@ -299,6 +305,7 @@ mod tests {
     fn tool_name_constants_match_router() {
         let registered = registered_tool_names();
         let constants = [
+            tool_names::SEARCH_HYBRID,
             tool_names::CVE_SEARCH,
             tool_names::DOCS_SEARCH,
             tool_names::ERRATA_SEARCH,
@@ -320,6 +327,7 @@ mod tests {
     fn all_toolset_covers_all_constants() {
         let allowed: HashSet<&str> = ToolSet::All.allowed_tools().iter().copied().collect();
         let constants = [
+            tool_names::SEARCH_HYBRID,
             tool_names::CVE_SEARCH,
             tool_names::DOCS_SEARCH,
             tool_names::ERRATA_SEARCH,
