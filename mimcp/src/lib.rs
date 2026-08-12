@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (C) Red Hat, Inc.
+
 //! MiMCP — MCP server library for the Red Hat Offline Knowledge Portal (RHOKP).
 
 pub mod embed;

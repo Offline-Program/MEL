@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (C) Red Hat, Inc.
+
 use std::sync::Arc;
 
 use rmcp::handler::server::tool::ToolCallContext;

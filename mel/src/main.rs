@@ -23,6 +23,7 @@
 
 #[macro_use]
 mod debug;
+mod mcp;
 
 use mel_libs::access_key::AccessKey;
 use mel_libs::crypt::{create_kek, dec, iv, AESParam};
@@ -83,8 +84,23 @@ fn main() {
     // launch solr (in the background)
     start_solr();
 
-    // launch httpd, with optional dek
-    match start_httpd(dek) {
+    // launch MCP server (in the background), if enabled
+    let mcp_shutdown = mcp::start();
+    if mcp_shutdown.is_some() {
+        debug_println!("MEL: MCP server starting in background");
+    } else {
+        debug_println!("MEL: MCP server disabled (set MCP_ENABLED=true to enable)");
+    }
+
+    // launch httpd, with optional dek — blocks until httpd exits
+    let httpd_result = start_httpd(dek);
+
+    // httpd has exited — cancel the MCP server
+    if let Some(ct) = mcp_shutdown {
+        ct.cancel();
+    }
+
+    match httpd_result {
         Ok(_) => {}
         Err(err) => handle_error(err),
     }

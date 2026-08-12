@@ -3,6 +3,7 @@ name = "mimcp"
 version = "0.1.0"
 edition = "2021"
 description = "MCP server for the Red Hat Offline Knowledge Portal (RHOKP)"
+license = "GPL-3.0-only"
 publish = false
 
 [dependencies]
