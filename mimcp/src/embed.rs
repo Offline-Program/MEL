@@ -1,3 +1,5 @@
+//! Text embedding via an ONNX model.
+
 use std::io::Cursor;
 use std::sync::Arc;
 
@@ -6,9 +8,12 @@ use tract_onnx::prelude::*;
 use tract_onnx::tract_core::dims;
 use tokenizers::Tokenizer;
 
+/// Raw ONNX model weights embedded at compile time.
 const MODEL_BYTES: &[u8] = include_bytes!("../../models/model.onnx");
+/// Tokenizer configuration embedded at compile time.
 const TOKENIZER_JSON: &str = include_str!("../../models/tokenizer.json");
 
+/// Optimized tract model ready for inference.
 type Model = RunnableModel<TypedFact, Box<dyn TypedOp>>;
 
 /// Generates vector embeddings from text using an ONNX model.
@@ -16,7 +21,9 @@ type Model = RunnableModel<TypedFact, Box<dyn TypedOp>>;
 /// Uses CLS pooling with L2 normalization, matching the behavior of
 /// `ibm-granite/granite-embedding-30m-english` and its successors.
 pub struct Embedder {
+    /// Thread-safe handle to the loaded ONNX model.
     model: Arc<Model>,
+    /// Tokenizer matching the model's vocabulary.
     tokenizer: Tokenizer,
 }
 

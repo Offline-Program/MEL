@@ -75,7 +75,7 @@ pub async fn mcp_router(config: MimcpConfig) -> Result<axum::Router> {
     for (path, tool_set) in routes {
         let tools = tool_set.allowed_tools().join(", ");
         tracing::info!(path, tools, "mounting endpoint");
-        router = router.nest_service(*path, make_service(tool_set.clone()));
+        router = router.nest_service(path, make_service(tool_set.clone()));
     }
 
     Ok(router)

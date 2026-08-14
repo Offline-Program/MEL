@@ -1,3 +1,5 @@
+//! Solr HTTP client and response types.
+
 use std::sync::Arc;
 
 use anyhow::Result;
@@ -24,9 +26,13 @@ const HYBRID_FIELD_LIST: &str = "\
 /// HTTP client for querying a Solr instance hosting the RHOKP `portal-rag` collection.
 #[derive(Clone)]
 pub struct SolrClient {
+    /// HTTP client for issuing Solr requests.
     http: Client,
+    /// URL for the `/select` endpoint.
     select_url: Url,
+    /// URL for the `/hybrid-search` endpoint.
     hybrid_url: Url,
+    /// URL for the `/admin/ping` health check.
     health_url: Url,
 }
 
@@ -210,19 +216,26 @@ fn format_vector(vector: &[f32]) -> String {
 /// JSON payload sent to Solr endpoints.
 #[derive(Serialize)]
 struct SolrPayload {
+    /// Query parameters for this request.
     params: SolrParams,
 }
 
 /// Query parameters nested inside [`SolrPayload`].
 #[derive(Serialize)]
 struct SolrParams {
+    /// Main query string.
     q: String,
+    /// Maximum number of results.
     rows: String,
+    /// Comma-separated field list.
     fl: String,
+    /// Filter queries.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     fq: Vec<String>,
+    /// Rerank query specification.
     #[serde(skip_serializing_if = "Option::is_none")]
     rq: Option<String>,
+    /// Rerank query body (referenced by `rq` via `$rqq`).
     #[serde(skip_serializing_if = "Option::is_none")]
     rqq: Option<String>,
 }
@@ -329,30 +342,43 @@ pub struct SolrResponseBody {
 /// may omit any field depending on the document and collection schema.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct SolrDoc {
+    /// Parent document identifier.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub doc_id: Option<String>,
+    /// Solr unique document ID.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
+    /// Document content type (e.g. `Cve_chunk`, `documentation_chunk`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub content_type: Option<String>,
+    /// Document title.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
+    /// Product name(s) associated with this document.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub product: Option<serde_json::Value>,
+    /// Product version string.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub product_version: Option<String>,
+    /// Content category.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub category: Option<String>,
+    /// Text chunk content.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub chunk: Option<String>,
+    /// Relevance score assigned by Solr.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub score: Option<f64>,
+    /// Public URL for the source document.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub online_source_url: Option<String>,
+    /// Filesystem path to the source document.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_path: Option<String>,
+    /// Section headings from the source document.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub headings: Option<String>,
+    /// Pre-rerank score from `originalScore()` function.
     #[serde(rename = "originalScore()", skip_serializing_if = "Option::is_none")]
     pub original_score: Option<f64>,
 }

@@ -1,3 +1,5 @@
+//! MCP tool definitions and server implementation.
+
 use std::sync::Arc;
 
 use rmcp::handler::server::tool::ToolCallContext;
@@ -12,11 +14,17 @@ use crate::solr::{SolrClient, SolrResponse};
 /// Upper bound on the number of results a single search can return.
 const MAX_ROWS: u32 = 20;
 
+/// String constants for tool names, kept in sync with `#[tool]` method names.
 pub mod tool_names {
+    /// CVE hybrid search tool.
     pub const CVE_SEARCH: &str = "cve_search";
+    /// Documentation hybrid search tool.
     pub const DOCS_SEARCH: &str = "docs_search";
+    /// Errata hybrid search tool.
     pub const ERRATA_SEARCH: &str = "errata_search";
+    /// Single CVE lookup by ID.
     pub const CVE_GET: &str = "cve_get";
+    /// Single erratum lookup by ID.
     pub const ERRATA_GET: &str = "errata_get";
 }
 
@@ -28,9 +36,11 @@ fn default_rows() -> u32 {
 /// Parameters for the `search` MCP tool (lexical).
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct SearchRequest {
+    /// Search query text.
     #[schemars(description = "Search query for Red Hat documentation, errata, CVEs, etc.")]
     pub query: String,
 
+    /// Maximum number of results to return.
     #[schemars(description = "Maximum number of results to return (1-20, default 5)")]
     #[serde(default = "default_rows")]
     pub rows: u32,
@@ -39,9 +49,11 @@ pub struct SearchRequest {
 /// Parameters for the `search_hybrid` MCP tool.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct HybridSearchRequest {
+    /// Search query text.
     #[schemars(description = "Search query for Red Hat documentation, errata, CVEs, etc.")]
     pub query: String,
 
+    /// Maximum number of results to return.
     #[schemars(description = "Maximum number of results to return (1-20, default 5)")]
     #[serde(default = "default_rows")]
     pub rows: u32,
@@ -50,9 +62,11 @@ pub struct HybridSearchRequest {
 /// Parameters for content-type-specific search tools.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct ContentSearchRequest {
+    /// Search query text.
     #[schemars(description = "Search query")]
     pub query: String,
 
+    /// Maximum number of results to return.
     #[schemars(description = "Maximum number of results to return (1-20, default 5)")]
     #[serde(default = "default_rows")]
     pub rows: u32,
@@ -61,6 +75,7 @@ pub struct ContentSearchRequest {
 /// Parameters for document lookup by ID.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct GetByIdRequest {
+    /// Document identifier.
     #[schemars(description = "Document identifier (e.g. CVE-2024-1234, RHSA-2024:1234)")]
     pub id: String,
 }
@@ -81,6 +96,7 @@ pub enum ToolSet {
 }
 
 impl ToolSet {
+    /// Returns the tool name strings this variant exposes.
     pub fn allowed_tools(&self) -> &[&str] {
         use tool_names::*;
         match self {
@@ -97,6 +113,7 @@ impl ToolSet {
         }
     }
 
+    /// Returns the MCP server instructions string for this tool set.
     fn instructions(&self) -> String {
         match self {
             Self::Default | Self::All => {
@@ -123,8 +140,11 @@ impl ToolSet {
 /// MCP server that exposes RHOKP search tools backed by a Solr instance.
 #[derive(Clone)]
 pub struct MimcpServer {
+    /// Shared Solr client.
     solr: Arc<SolrClient>,
+    /// Shared embedding model.
     embedder: Arc<Embedder>,
+    /// Which tools this server instance exposes.
     tool_set: ToolSet,
 }
 
@@ -138,11 +158,13 @@ impl MimcpServer {
         }
     }
 
+    /// Overrides the default tool set for this server instance.
     pub fn with_tool_set(mut self, tool_set: ToolSet) -> Self {
         self.tool_set = tool_set;
         self
     }
 
+    /// Runs a hybrid search restricted to a single content type.
     async fn hybrid_search_filtered(
         &self,
         query: &str,
