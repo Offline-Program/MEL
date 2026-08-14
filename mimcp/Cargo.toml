@@ -5,6 +5,9 @@ edition = "2021"
 description = "MCP server for the Red Hat Offline Knowledge Portal (RHOKP)"
 publish = false
 
+[features]
+real-solr = []
+
 [dependencies]
 rmcp = { version = "2.2", features = ["server", "macros", "transport-streamable-http-server"] }
 reqwest = { version = "0.13", features = ["json"] }

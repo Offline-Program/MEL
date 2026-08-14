@@ -9,7 +9,7 @@ use rmcp::service::RequestContext;
 use rmcp::{RoleServer, schemars, tool, tool_handler, tool_router, ServerHandler};
 
 use crate::embed::Embedder;
-use crate::solr::{SolrClient, SolrResponse};
+use crate::solr::{SolrClient, SolrFilter, SolrResponse};
 
 /// Upper bound on the number of results a single search can return.
 const MAX_ROWS: u32 = 20;
@@ -180,7 +180,7 @@ impl MimcpServer {
 
         let result = self
             .solr
-            .hybrid_search(query, &vector, rows, Some(content_type))
+            .hybrid_search(query, &vector, rows, &[SolrFilter::ContentType(content_type)])
             .await
             .map_err(|e| {
                 tracing::error!(error = %e, content_type, "solr hybrid search failed");
@@ -226,7 +226,7 @@ impl MimcpServer {
 
         let result = self
             .solr
-            .hybrid_search(&req.query, &vector, rows, None)
+            .hybrid_search(&req.query, &vector, rows, &[])
             .await
             .map_err(|e| {
                 tracing::error!(error = %e, "solr hybrid search failed");

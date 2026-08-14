@@ -23,6 +23,30 @@ const HYBRID_FIELD_LIST: &str = "\
     category,chunk,score,online_source_url,source_path,headings,\
     originalScore()";
 
+/// Typed filter for Solr `fq` clauses, mapped to the `portal-rag` schema.
+pub enum SolrFilter<'a> {
+    /// Filter by `content_type` (e.g. `Cve_chunk`, `documentation_chunk`).
+    ContentType(&'a str),
+    /// Filter by `product` slug (e.g. `openshift_container_platform`).
+    Product(&'a str),
+    /// Filter by `product_version` (e.g. `4.20`, `10`).
+    ProductVersion(&'a str),
+    /// Filter by `category` (e.g. `documentation`).
+    Category(&'a str),
+}
+
+impl SolrFilter<'_> {
+    /// Renders this filter as a Solr `fq` clause string.
+    fn to_fq(&self) -> String {
+        match self {
+            Self::ContentType(v) => format!("content_type:{v}"),
+            Self::Product(v) => format!("product:{v}"),
+            Self::ProductVersion(v) => format!("product_version:{v}"),
+            Self::Category(v) => format!("category:{v}"),
+        }
+    }
+}
+
 /// HTTP client for querying a Solr instance hosting the RHOKP `portal-rag` collection.
 #[derive(Clone)]
 pub struct SolrClient {
@@ -110,8 +134,8 @@ impl SolrClient {
     /// and used as the rerank query. The keyword query runs first, then the
     /// top 10,000 results are reranked by vector similarity.
     ///
-    /// When `content_type` is `Some`, an additional `fq` clause restricts
-    /// results to that content type.
+    /// `filters` are appended as Solr `fq` clauses after the mandatory
+    /// `is_chunk:true` filter.
     ///
     /// Returns `Err` if the HTTP request fails, the server responds with a
     /// non-2xx status code, or the response body cannot be deserialized.
@@ -120,16 +144,9 @@ impl SolrClient {
         query: &str,
         vector: &[f32],
         rows: u32,
-        content_type: Option<&str>,
+        filters: &[SolrFilter<'_>],
     ) -> Result<SolrResponse> {
-        let ct_filter;
-        let extra_fq = match content_type {
-            Some(ct) => {
-                ct_filter = format!("content_type:{ct}");
-                vec![ct_filter.as_str()]
-            }
-            None => vec![],
-        };
+        let extra_fq: Vec<String> = filters.iter().map(SolrFilter::to_fq).collect();
         let payload = SolrPayload {
             params: SolrParams::hybrid(query, vector, rows, &extra_fq),
         };
@@ -242,9 +259,9 @@ struct SolrParams {
 
 impl SolrParams {
     /// Constructs parameters for a lexical search query.
-    fn lexical(query: &str, rows: u32, extra_fq: &[&str]) -> Self {
+    fn lexical(query: &str, rows: u32, extra_fq: &[String]) -> Self {
         let mut fq: Vec<String> = vec!["is_chunk:true".to_owned()];
-        fq.extend(extra_fq.iter().map(|s| (*s).to_owned()));
+        fq.extend(extra_fq.iter().cloned());
         Self {
             q: query.to_owned(),
             rows: rows.to_string(),
@@ -256,10 +273,10 @@ impl SolrParams {
     }
 
     /// Constructs parameters for a hybrid search query with vector reranking.
-    fn hybrid(query: &str, vector: &[f32], rows: u32, extra_fq: &[&str]) -> Self {
+    fn hybrid(query: &str, vector: &[f32], rows: u32, extra_fq: &[String]) -> Self {
         let vector_str = format_vector(vector);
         let mut fq: Vec<String> = vec!["is_chunk:true".to_owned()];
-        fq.extend(extra_fq.iter().map(|s| (*s).to_owned()));
+        fq.extend(extra_fq.iter().cloned());
         Self {
             q: query.to_owned(),
             rows: rows.to_string(),
@@ -381,4 +398,115 @@ pub struct SolrDoc {
     /// Pre-rerank score from `originalScore()` function.
     #[serde(rename = "originalScore()", skip_serializing_if = "Option::is_none")]
     pub original_score: Option<f64>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse_payload(payload: &SolrPayload) -> serde_json::Value {
+        serde_json::to_value(payload).expect("SolrPayload should serialize")
+    }
+
+    fn s(val: &str) -> String {
+        val.to_owned()
+    }
+
+    #[test]
+    fn hybrid_without_extra_fq_has_only_is_chunk() {
+        let payload = SolrPayload {
+            params: SolrParams::hybrid("openshift", &[0.1, 0.2], 5, &[]),
+        };
+        let json = parse_payload(&payload);
+        let fq = json["params"]["fq"].as_array().unwrap();
+        assert_eq!(fq.len(), 1);
+        assert_eq!(fq[0], "is_chunk:true");
+    }
+
+    #[test]
+    fn hybrid_with_extra_fq_appends_filters() {
+        let filters = [s("content_type:Cve_chunk"), s("product:OpenShift")];
+        let payload = SolrPayload {
+            params: SolrParams::hybrid("openshift", &[0.1, 0.2], 5, &filters),
+        };
+        let json = parse_payload(&payload);
+        let fq = json["params"]["fq"].as_array().unwrap();
+        assert_eq!(fq.len(), 3);
+        assert_eq!(fq[0], "is_chunk:true");
+        assert_eq!(fq[1], "content_type:Cve_chunk");
+        assert_eq!(fq[2], "product:OpenShift");
+    }
+
+    #[test]
+    fn lexical_without_extra_fq_has_only_is_chunk() {
+        let payload = SolrPayload {
+            params: SolrParams::lexical("openshift", 5, &[]),
+        };
+        let json = parse_payload(&payload);
+        let fq = json["params"]["fq"].as_array().unwrap();
+        assert_eq!(fq.len(), 1);
+        assert_eq!(fq[0], "is_chunk:true");
+    }
+
+    #[test]
+    fn lexical_with_extra_fq_appends_filters() {
+        let filters = [s("category:documentation")];
+        let payload = SolrPayload {
+            params: SolrParams::lexical("openshift", 5, &filters),
+        };
+        let json = parse_payload(&payload);
+        let fq = json["params"]["fq"].as_array().unwrap();
+        assert_eq!(fq.len(), 2);
+        assert_eq!(fq[0], "is_chunk:true");
+        assert_eq!(fq[1], "category:documentation");
+    }
+
+    #[test]
+    fn hybrid_fq_values_are_all_strings() {
+        let payload = SolrPayload {
+            params: SolrParams::hybrid("q", &[0.1], 5, &[]),
+        };
+        let json = parse_payload(&payload);
+        let fq = json["params"]["fq"].as_array().unwrap();
+        assert!(fq.iter().all(|v| v.as_str().is_some()), "all fq values should be strings");
+    }
+
+    #[test]
+    fn hybrid_fq_preserves_insertion_order() {
+        let filters = [s("a:1"), s("b:2"), s("c:3")];
+        let payload = SolrPayload {
+            params: SolrParams::hybrid("q", &[0.1], 5, &filters),
+        };
+        let json = parse_payload(&payload);
+        let fq: Vec<&str> = json["params"]["fq"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
+        assert_eq!(fq, vec!["is_chunk:true", "a:1", "b:2", "c:3"]);
+    }
+
+    #[test]
+    fn solr_filter_content_type_renders_correctly() {
+        assert_eq!(SolrFilter::ContentType("Cve_chunk").to_fq(), "content_type:Cve_chunk");
+    }
+
+    #[test]
+    fn solr_filter_product_renders_correctly() {
+        assert_eq!(
+            SolrFilter::Product("openshift_container_platform").to_fq(),
+            "product:openshift_container_platform"
+        );
+    }
+
+    #[test]
+    fn solr_filter_product_version_renders_correctly() {
+        assert_eq!(SolrFilter::ProductVersion("4.20").to_fq(), "product_version:4.20");
+    }
+
+    #[test]
+    fn solr_filter_category_renders_correctly() {
+        assert_eq!(SolrFilter::Category("documentation").to_fq(), "category:documentation");
+    }
 }
