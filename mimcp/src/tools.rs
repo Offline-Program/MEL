@@ -299,7 +299,7 @@ mod tests {
     }
 
     /// Guards against a tool_names constant drifting from the actual
-    /// #[tool] method name — a rename on one side without the other
+    /// #[tool] method name - a rename on one side without the other
     /// would silently hide the tool from all endpoints.
     #[test]
     fn tool_name_constants_match_router() {
@@ -343,7 +343,7 @@ mod tests {
     }
 
     /// Prevents a per-content-type ToolSet variant from advertising a
-    /// tool that ToolSet::All doesn't include — which would mean the
+    /// tool that ToolSet::All doesn't include - which would mean the
     /// scoped endpoint exposes something the "everything" endpoint hides.
     #[test]
     fn toolset_subsets_are_subsets_of_all() {

@@ -92,10 +92,10 @@ fn main() {
         debug_println!("MEL: MCP server disabled (set MCP_ENABLED=true to enable)");
     }
 
-    // launch httpd, with optional dek — blocks until httpd exits
+    // launch httpd, with optional dek - blocks until httpd exits
     let httpd_result = start_httpd(dek);
 
-    // httpd has exited — cancel the MCP server
+    // httpd has exited - cancel the MCP server
     if let Some(ct) = mcp_shutdown {
         ct.cancel();
     }

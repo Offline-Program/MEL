@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Copyright (C) Red Hat, Inc.
 
-//! MiMCP — MCP server library for the Red Hat Offline Knowledge Portal (RHOKP).
+//! MiMCP - MCP server library for the Red Hat Offline Knowledge Portal (RHOKP).
 
 pub mod embed;
 pub mod solr;
@@ -31,10 +31,10 @@ pub struct MimcpConfig {
 /// Builds an axum `Router` with MCP services mounted at multiple endpoints.
 ///
 /// Each endpoint exposes a different subset of tools:
-/// - `/mcp` — all content-type-specific tools
-/// - `/mcp/all` — all tools
-/// - `/mcp/cves` — CVE tools only
-/// - `/mcp/docs` — documentation tools only
+/// - `/mcp` - all content-type-specific tools
+/// - `/mcp/all` - all tools
+/// - `/mcp/cves` - CVE tools only
+/// - `/mcp/docs` - documentation tools only
 ///
 /// Returns `Err` if the Solr endpoint URLs cannot be constructed, the Solr
 /// health check fails, or the embedding model cannot be loaded.

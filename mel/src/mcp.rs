@@ -22,9 +22,9 @@
 
 use std::time::Duration;
 
-use mimcp::{MimcpConfig, mcp_router};
+use mimcp::{mcp_router, MimcpConfig};
 use tokio_util::sync::CancellationToken;
-use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 use url::Url;
 
 /// Environment variable that enables the MCP server. Same pattern as `ASK_RED_HAT_OFFLINE`.
@@ -33,7 +33,7 @@ const MCP_ENABLED_ENV: &str = "MCP_ENABLED";
 /// Default Solr URL used by MCP when running inside the container.
 const SOLR_URL: &str = "http://localhost:8983";
 
-/// Address the MCP server binds to. Internal only — Apache proxies `/mcp` here.
+/// Address the MCP server binds to. Internal only - Apache proxies `/mcp` here.
 const BIND_ADDR: &str = "127.0.0.1:3001";
 
 /// Maximum number of Solr readiness poll attempts before giving up.
