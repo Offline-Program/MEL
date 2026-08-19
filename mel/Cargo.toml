@@ -15,18 +15,33 @@ publish = false
 name = "mel"
 path = "src/main.rs"
 
+[features]
+# Dependencies for the MCP server.
+mcp = [
+    "dep:mimcp",
+    "dep:tokio",
+    "dep:tokio-util",
+    "dep:axum",
+    "dep:tracing",
+    "dep:tracing-subscriber",
+    "dep:url",
+    "dep:reqwest",
+]
+
 [dependencies]
 mel_libs = { path = "../mel_libs/" }
-mimcp = { path = "../mimcp/" }
 tar = "0.4.45"
 flate2 = "1.0.33"
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "signal"] }
-tokio-util = "0.7"
-axum = "0.8"
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "env-filter"] }
-url = "2.5"
-reqwest = "0.13"
+
+# MCP-only dependencies.
+mimcp = { path = "../mimcp/", optional = true }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "signal"], optional = true }
+tokio-util = { version = "0.7", optional = true }
+axum = { version = "0.8", optional = true }
+tracing = { version = "0.1", optional = true }
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "env-filter"], optional = true }
+url = { version = "2.5", optional = true }
+reqwest = { version = "0.13", optional = true }
 
 [build-dependencies]
 mel_libs = { path = "../mel_libs/" }

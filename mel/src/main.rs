@@ -21,9 +21,11 @@
 //! sets up the necessary values for Apache to perform decryption of paywalled content, then
 //! launches Solr and Apache.
 
-#[macro_use]
 mod debug;
+#[cfg(feature = "mcp")]
 mod mcp;
+
+use debug::debug_println;
 
 use mel_libs::access_key::AccessKey;
 use mel_libs::crypt::{create_kek, dec, iv, AESParam};
@@ -84,22 +86,16 @@ fn main() {
     // launch solr (in the background)
     start_solr();
 
-    // launch MCP server (in the background), if enabled
-    let mcp_shutdown = mcp::start();
-    if mcp_shutdown.is_some() {
-        debug_println!("MEL: MCP server starting in background");
-    } else {
-        debug_println!("MEL: MCP server disabled (set MCP_ENABLED=true to enable)");
-    }
+    // launch MCP server.
+    #[cfg(feature = "mcp")]
+    let mcp_shutdown_handle = mcp::start();
 
     // launch httpd, with optional dek - blocks until httpd exits
     let httpd_result = start_httpd(dek);
 
     // httpd has exited - cancel the MCP server
-    if let Some(ct) = mcp_shutdown {
-        ct.cancel();
-    }
-
+    #[cfg(feature = "mcp")]
+    mcp_shutdown_handle.cancel();
     match httpd_result {
         Ok(_) => {}
         Err(err) => handle_error(err),
@@ -281,6 +277,11 @@ fn start_httpd(enc_input: Option<Dek>) -> Result<std::process::ExitStatus, MelEr
     let mak_missing =
         ACCESS_KEY.get().unwrap(/* safe while it's init'd at the beginning of main */).is_none();
 
+    // When MEL is built with the `mcp` feature, pass MCP_ENABLED to Apache to
+    // enable the /mcp proxypass.
+    #[cfg(feature = "mcp")]
+    httpd_cmd.env("MCP_ENABLED", "true");
+
     if let Some(dek) = enc_input {
         // TODO: pass the DEK to MAST via IPC instead of env to Apache
         httpd_cmd
@@ -401,9 +402,9 @@ fn get_credits() -> String {
                    . .'..:l:cdool:cc,.....
                          ...,:;'.....
                            ....
-                             .                                                                      
-                         ~ Mimir ~     
-     
+                             .
+                         ~ Mimir ~
+
           "Take my knowledge, it will give you aid
            when sundered from the connected world."
 

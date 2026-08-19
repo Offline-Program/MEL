@@ -16,9 +16,9 @@
 
 //! MCP server lifecycle management for MEL.
 //!
-//! When `MCP_ENABLED=true`, spawns a background thread running a tokio runtime
-//! that waits for Solr to become healthy, then serves the MCP router on an
-//! internal-only address for Apache to reverse-proxy.
+//! Compiled in only when the `mcp` cargo feature is enabled. Spawns a background
+//! thread running a tokio runtime that waits for Solr to become healthy, then
+//! serves the MCP router on an internal-only address for Apache to reverse-proxy.
 
 use std::time::Duration;
 
@@ -27,8 +27,7 @@ use tokio_util::sync::CancellationToken;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 use url::Url;
 
-/// Environment variable that enables the MCP server. Same pattern as `ASK_RED_HAT_OFFLINE`.
-const MCP_ENABLED_ENV: &str = "MCP_ENABLED";
+use crate::debug::debug_println;
 
 /// Default Solr URL used by MCP when running inside the container.
 const SOLR_URL: &str = "http://localhost:8983";
@@ -42,20 +41,13 @@ const SOLR_WAIT_ATTEMPTS: u32 = 60;
 /// Delay between Solr readiness checks.
 const SOLR_WAIT_INTERVAL: Duration = Duration::from_secs(2);
 
-/// Returns `true` when the `MCP_ENABLED` env var is exactly `"true"`.
-fn enabled() -> bool {
-    matches!(std::env::var(MCP_ENABLED_ENV), Ok(v) if v == "true")
-}
-
-/// If MCP is enabled, spawns a background thread that starts a tokio runtime,
-/// waits for Solr, and serves the MCP router.
+/// Spawns a background thread that starts a tokio runtime, waits for Solr, and
+/// serves the MCP router.
 ///
-/// Returns `Some(CancellationToken)` that the caller should cancel when MEL is
-/// shutting down (i.e. when httpd exits). Returns `None` if MCP is disabled.
-pub fn start() -> Option<CancellationToken> {
-    if !enabled() {
-        return None;
-    }
+/// Returns a [`CancellationToken`] that the caller should cancel when MEL is
+/// shutting down (i.e. when httpd exits).
+pub fn start() -> CancellationToken {
+    debug_println!("MEL: MCP server starting in background");
 
     let ct = CancellationToken::new();
     let ct_child = ct.child_token();
@@ -81,7 +73,7 @@ pub fn start() -> Option<CancellationToken> {
         });
     });
 
-    Some(ct)
+    ct
 }
 
 /// Waits for Solr, builds the MCP router, and serves it until cancelled.
