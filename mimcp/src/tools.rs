@@ -15,14 +15,59 @@ use crate::solr::{SolrClient, SolrFilter, SolrResponse};
 /// Upper bound on the number of results a single search can return.
 const MAX_ROWS: u32 = 20;
 
-pub mod tool_names {
-    // pub const SEARCH: &str = "search";
-    pub const SEARCH_HYBRID: &str = "search";
-    pub const CVE_SEARCH: &str = "cve_search";
-    pub const DOCS_SEARCH: &str = "docs_search";
-    pub const ERRATA_SEARCH: &str = "errata_search";
-    pub const CVE_GET: &str = "cve_get";
-    pub const ERRATA_GET: &str = "errata_get";
+/// Defines the [`Tool`] enum from a single list of `Variant => "wire_name"`
+/// pairs, deriving [`Tool::ALL`] and [`Tool::name`] from the same source so
+/// they cannot drift out of sync as tools are added or removed.
+macro_rules! define_tools {
+    ( $( $(#[$meta:meta])* $variant:ident => $name:literal ),+ $(,)? ) => {
+        /// Every MCP tool exposed by this server.
+        ///
+        /// This enum is the single source of truth for tool identity. Each
+        /// variant's [`Tool::name`] must match the corresponding `#[tool]`
+        /// method name below; the `tool_names_match_router` test enforces that.
+        #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+        pub enum Tool {
+            $( $(#[$meta])* $variant, )+
+        }
+
+        impl Tool {
+            /// Every tool variant, for exhaustive iteration.
+            pub const ALL: &'static [Tool] = &[ $( Tool::$variant ),+ ];
+
+            /// The wire name of the tool, matching its `#[tool]` method name.
+            pub const fn name(self) -> &'static str {
+                match self {
+                    $( Tool::$variant => $name, )+
+                }
+            }
+        }
+    };
+}
+
+define_tools! {
+    /// Lexical keyword search. Currently disabled (not in any active `ToolSet`).
+    SearchLexical => "search_lexical",
+    /// Hybrid (keyword + semantic) search.
+    Search => "search",
+    /// CVE hybrid search.
+    CveSearch => "cve_search",
+    /// Documentation hybrid search.
+    DocsSearch => "docs_search",
+    /// Errata hybrid search.
+    ErrataSearch => "errata_search",
+    /// CVE lookup by ID.
+    CveGet => "cve_get",
+    /// Errata lookup by ID.
+    ErrataGet => "errata_get",
+}
+
+impl Tool {
+    /// Resolves a wire name to its [`Tool`].
+    ///
+    /// Returns `None` if `name` does not correspond to any known tool.
+    pub fn from_name(name: &str) -> Option<Tool> {
+        Tool::ALL.iter().copied().find(|t| t.name() == name)
+    }
 }
 
 /// Returns the default value for the `rows` field on search requests.
@@ -30,9 +75,9 @@ fn default_rows() -> u32 {
     5
 }
 
-/// Parameters for the `search` MCP tool (lexical).
+/// Parameters for the `search_lexical` MCP tool.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct SearchRequest {
+pub struct LexicalSearchRequest {
     #[schemars(description = "Search query for Red Hat documentation, errata, CVEs, etc.")]
     pub query: String,
 
@@ -41,7 +86,7 @@ pub struct SearchRequest {
     pub rows: u32,
 }
 
-/// Parameters for the `search_hybrid` MCP tool.
+/// Parameters for the `search` (hybrid) MCP tool.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct HybridSearchRequest {
     #[schemars(description = "Search query for Red Hat documentation, errata, CVEs, etc.")]
@@ -86,22 +131,26 @@ pub enum ToolSet {
 }
 
 impl ToolSet {
-    pub fn allowed_tools(&self) -> &[&str] {
-        use tool_names::*;
+    pub fn allowed_tools(&self) -> &'static [Tool] {
         match self {
-            Self::Default => &[SEARCH_HYBRID],
+            Self::Default => &[Tool::Search],
             Self::All => &[
-                SEARCH_HYBRID,
-                CVE_SEARCH,
-                DOCS_SEARCH,
-                ERRATA_SEARCH,
-                CVE_GET,
-                ERRATA_GET,
+                Tool::Search,
+                Tool::CveSearch,
+                Tool::DocsSearch,
+                Tool::ErrataSearch,
+                Tool::CveGet,
+                Tool::ErrataGet,
             ],
-            Self::Cves => &[CVE_SEARCH, CVE_GET],
-            Self::Docs => &[DOCS_SEARCH],
-            Self::Errata => &[ERRATA_SEARCH, ERRATA_GET],
+            Self::Cves => &[Tool::CveSearch, Tool::CveGet],
+            Self::Docs => &[Tool::DocsSearch],
+            Self::Errata => &[Tool::ErrataSearch, Tool::ErrataGet],
         }
+    }
+
+    /// Returns `true` if this tool set exposes `tool`.
+    fn allows(&self, tool: Tool) -> bool {
+        self.allowed_tools().contains(&tool)
     }
 
     fn instructions(&self) -> String {
@@ -177,11 +226,11 @@ impl MimcpServer {
 #[tool_router]
 impl MimcpServer {
     #[tool(
-        description = "Lexical keyword search across Red Hat product documentation, errata, CVEs, and knowledge base articles. Use search_hybrid for better relevance."
+        description = "Lexical keyword search across Red Hat product documentation, errata, CVEs, and knowledge base articles. Use search for better relevance."
     )]
-    async fn search(
+    async fn search_lexical(
         &self,
-        Parameters(req): Parameters<SearchRequest>,
+        Parameters(req): Parameters<LexicalSearchRequest>,
     ) -> Result<Json<SolrResponse>, ErrorData> {
         let rows = req.rows.clamp(1, MAX_ROWS);
 
@@ -196,7 +245,7 @@ impl MimcpServer {
     #[tool(
         description = "Hybrid search combining keyword matching with semantic relevance reranking. Produces more relevant results than plain lexical search. Use this for natural language questions about Red Hat products, CVEs, errata, and documentation."
     )]
-    async fn search_hybrid(
+    async fn search(
         &self,
         Parameters(req): Parameters<HybridSearchRequest>,
     ) -> Result<Json<SolrResponse>, ErrorData> {
@@ -298,46 +347,47 @@ mod tests {
             .collect()
     }
 
-    /// Guards against a tool_names constant drifting from the actual
-    /// #[tool] method name - a rename on one side without the other
-    /// would silently hide the tool from all endpoints.
+    /// Guards against a [`Tool`] variant's name drifting from the actual
+    /// #[tool] method name - a rename on one side without the other would
+    /// mean the enum (and thus endpoint scoping) no longer matches the router.
     #[test]
-    fn tool_name_constants_match_router() {
+    fn tool_names_match_router() {
         let registered = registered_tool_names();
-        let constants = [
-            tool_names::SEARCH_HYBRID,
-            tool_names::CVE_SEARCH,
-            tool_names::DOCS_SEARCH,
-            tool_names::ERRATA_SEARCH,
-            tool_names::CVE_GET,
-            tool_names::ERRATA_GET,
-        ];
-        for name in constants {
+        for &tool in Tool::ALL {
             assert!(
-                registered.contains(name),
-                "tool_names constant {name:?} not found in tool router. Registered: {registered:?}"
+                registered.contains(tool.name()),
+                "Tool::{tool:?} name {:?} not found in tool router. Registered: {registered:?}",
+                tool.name()
             );
         }
     }
 
-    /// Catches a new tool_names constant being added without including
-    /// it in ToolSet::All, which would make the tool unreachable from
-    /// the /mcp and /mcp/all endpoints.
+    /// Every registered #[tool] method must map back to a [`Tool`] variant, so
+    /// a newly-added tool method can't slip past the enum and, with it, past
+    /// the endpoint-scoping enforcement in `call_tool`.
     #[test]
-    fn all_toolset_covers_all_constants() {
-        let allowed: HashSet<&str> = ToolSet::All.allowed_tools().iter().copied().collect();
-        let constants = [
-            tool_names::SEARCH_HYBRID,
-            tool_names::CVE_SEARCH,
-            tool_names::DOCS_SEARCH,
-            tool_names::ERRATA_SEARCH,
-            tool_names::CVE_GET,
-            tool_names::ERRATA_GET,
-        ];
-        for name in constants {
+    fn router_has_no_unknown_tools() {
+        for name in registered_tool_names() {
             assert!(
-                allowed.contains(name),
-                "tool_names constant {name:?} missing from ToolSet::All"
+                Tool::from_name(&name).is_some(),
+                "router exposes tool {name:?} with no matching Tool variant"
+            );
+        }
+    }
+
+    /// Catches a new [`Tool`] variant being added without including it in
+    /// ToolSet::All, which would make the tool unreachable from /mcp/all.
+    /// `SearchLexical` is intentionally excluded (disabled).
+    #[test]
+    fn all_toolset_covers_every_enabled_tool() {
+        let allowed: HashSet<Tool> = ToolSet::All.allowed_tools().iter().copied().collect();
+        for &tool in Tool::ALL {
+            if tool == Tool::SearchLexical {
+                continue;
+            }
+            assert!(
+                allowed.contains(&tool),
+                "Tool::{tool:?} missing from ToolSet::All"
             );
         }
     }
@@ -347,15 +397,24 @@ mod tests {
     /// scoped endpoint exposes something the "everything" endpoint hides.
     #[test]
     fn toolset_subsets_are_subsets_of_all() {
-        let all: HashSet<&str> = ToolSet::All.allowed_tools().iter().copied().collect();
+        let all: HashSet<Tool> = ToolSet::All.allowed_tools().iter().copied().collect();
         for variant in [ToolSet::Cves, ToolSet::Docs, ToolSet::Errata] {
-            for name in variant.allowed_tools() {
+            for &tool in variant.allowed_tools() {
                 assert!(
-                    all.contains(name),
-                    "{name:?} in a ToolSet variant but not in ToolSet::All"
+                    all.contains(&tool),
+                    "{tool:?} in a ToolSet variant but not in ToolSet::All"
                 );
             }
         }
+    }
+
+    /// The default endpoint must expose the hybrid `search` tool, never the
+    /// lexical one.
+    #[test]
+    fn default_toolset_is_hybrid_search() {
+        assert_eq!(ToolSet::Default.allowed_tools(), &[Tool::Search]);
+        assert_eq!(Tool::Search.name(), "search");
+        assert!(!ToolSet::Default.allows(Tool::SearchLexical));
     }
 }
 
@@ -381,6 +440,21 @@ impl ServerHandler for MimcpServer {
                 tracing::trace!(direction = "in", method = "tools/call", "\n{json}");
             }
         }
+
+        // Enforce endpoint scoping: a tool that this endpoint's ToolSet does not
+        // expose must not be callable, even though the underlying tool_router
+        // knows how to dispatch every tool. Without this, list_tools would hide
+        // a tool while call_tool would still happily execute it.
+        match Tool::from_name(request.name.as_ref()) {
+            Some(tool) if self.tool_set.allows(tool) => {}
+            _ => {
+                return Err(ErrorData::invalid_params(
+                    format!("tool {:?} is not available on this endpoint", request.name),
+                    None,
+                ));
+            }
+        }
+
         let tcc = ToolCallContext::new(self, request, context);
         let result = Self::tool_router().call(tcc).await;
         if tracing::enabled!(tracing::Level::TRACE) {
@@ -405,11 +479,12 @@ impl ServerHandler for MimcpServer {
         _request: Option<PaginatedRequestParams>,
         _context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, rmcp::ErrorData> {
-        let allowed = self.tool_set.allowed_tools();
-        let tools: Vec<Tool> = Self::tool_router()
+        let tools: Vec<rmcp::model::Tool> = Self::tool_router()
             .list_all()
             .into_iter()
-            .filter(|t| allowed.contains(&t.name.as_ref()))
+            .filter(|t| {
+                Tool::from_name(t.name.as_ref()).is_some_and(|tool| self.tool_set.allows(tool))
+            })
             .collect();
 
         let result = ListToolsResult {

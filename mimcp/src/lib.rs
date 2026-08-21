@@ -28,13 +28,12 @@ pub struct MimcpConfig {
     pub cancellation_token: CancellationToken,
 }
 
-/// Builds an axum `Router` with MCP services mounted at multiple endpoints.
+/// Builds an axum `Router` with the MCP service mounted.
 ///
-/// Each endpoint exposes a different subset of tools:
-/// - `/mcp` - all content-type-specific tools
-/// - `/mcp/all` - all tools
-/// - `/mcp/cves` - CVE tools only
-/// - `/mcp/docs` - documentation tools only
+/// Only the default `/mcp` endpoint is mounted today; it exposes the hybrid
+/// `search` tool ([`ToolSet::Default`]). Content-type-scoped endpoints
+/// (`/mcp/cves`, `/mcp/docs`, `/mcp/errata`, `/mcp/all`) are proof-of-concept
+/// and remain commented out below until coordination with Lightforge evolves.
 ///
 /// Returns `Err` if the Solr endpoint URLs cannot be constructed, the Solr
 /// health check fails, or the embedding model cannot be loaded.
@@ -76,7 +75,12 @@ pub async fn mcp_router(config: MimcpConfig) -> Result<axum::Router> {
 
     let mut router = axum::Router::new();
     for (path, tool_set) in routes {
-        let tools = tool_set.allowed_tools().join(", ");
+        let tools = tool_set
+            .allowed_tools()
+            .iter()
+            .map(|t| t.name())
+            .collect::<Vec<_>>()
+            .join(", ");
         tracing::info!(path, tools, "mounting endpoint");
         router = router.nest_service(*path, make_service(tool_set.clone()));
     }
