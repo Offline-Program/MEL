@@ -15,7 +15,7 @@ use crate::solr::{SolrClient, SolrFilter, SolrResponse};
 /// Upper bound on the number of results a single search can return.
 const MAX_ROWS: u32 = 20;
 
-/// Defines the [`Tool`] enum from a single list of `Variant => "wire_name"`
+/// Defines the [`Tool`] enum from a single list of `Variant => "tool_name"`
 /// pairs, deriving [`Tool::ALL`] and [`Tool::name`] from the same source so
 /// they cannot drift out of sync as tools are added or removed.
 macro_rules! define_tools {
@@ -34,7 +34,7 @@ macro_rules! define_tools {
             /// Every tool variant, for exhaustive iteration.
             pub const ALL: &'static [Tool] = &[ $( Tool::$variant ),+ ];
 
-            /// The wire name of the tool, matching its `#[tool]` method name.
+            /// The name of the tool, matching its `#[tool]` method name.  The tool name is presented to, and requested by, MCP clients.
             pub const fn name(self) -> &'static str {
                 match self {
                     $( Tool::$variant => $name, )+
@@ -62,7 +62,7 @@ define_tools! {
 }
 
 impl Tool {
-    /// Resolves a wire name to its [`Tool`].
+    /// Resolves a name to its [`Tool`].
     ///
     /// Returns `None` if `name` does not correspond to any known tool.
     pub fn from_name(name: &str) -> Option<Tool> {
@@ -212,7 +212,12 @@ impl MimcpServer {
 
         let result = self
             .solr
-            .hybrid_search(query, &vector, rows, &[SolrFilter::ContentType(content_type)])
+            .hybrid_search(
+                query,
+                &vector,
+                rows,
+                &[SolrFilter::ContentType(content_type)],
+            )
             .await
             .map_err(|e| {
                 tracing::error!(error = %e, content_type, "solr hybrid search failed");
