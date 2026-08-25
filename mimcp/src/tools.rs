@@ -10,7 +10,7 @@ use rmcp::service::RequestContext;
 use rmcp::{schemars, tool, tool_handler, tool_router, RoleServer, ServerHandler};
 
 use crate::embed::Embedder;
-use crate::solr::{SolrClient, SolrFilter, SolrResponse};
+use crate::solr::{PortalFilter, PortalRagFilter, SolrClient, SolrFilter, SolrResponse};
 
 /// Upper bound on the number of results a single search can return.
 const MAX_ROWS: u32 = 20;
@@ -45,20 +45,24 @@ macro_rules! define_tools {
 }
 
 define_tools! {
-    /// Lexical keyword search. Currently disabled (not in any active `ToolSet`).
-    SearchLexical => "search_lexical",
+    // Lexical keyword search. Commented out until the lexical Portal index is
+    // wired up; re-enable alongside a `search_lexical` router method.
+    // SearchLexical => "search_lexical",
     /// Hybrid (keyword + semantic) search.
     Search => "search",
-    /// CVE hybrid search.
-    CveSearch => "cve_search",
+    /// CVE search against the lexical Portal index.
+    CveSearchPortal => "cve_search_portal",
+    /// CVE search against the PortalRag index.
+    CveSearchRag => "cve_search_rag",
     /// Documentation hybrid search.
     DocsSearch => "docs_search",
-    /// Errata hybrid search.
-    ErrataSearch => "errata_search",
-    /// CVE lookup by ID.
-    CveGet => "cve_get",
-    /// Errata lookup by ID.
-    ErrataGet => "errata_get",
+    /// CVE lookup by ID against the lexical Portal index.
+    CveGetPortal => "cve_get_portal",
+    /// CVE lookup by ID against the PortalRag index.
+    CveGetRag => "cve_get_rag",
+    // Errata tools disabled for now; re-enable when errata coverage returns.
+    // ErrataSearch => "errata_search",
+    // ErrataGet => "errata_get",
 }
 
 impl Tool {
@@ -126,8 +130,9 @@ pub enum ToolSet {
     Cves,
     /// Documentation tools only.
     Docs,
-    /// Errata tools only.
-    Errata,
+    // Errata tools disabled for now; re-enable alongside the errata `Tool`
+    // variants and router methods.
+    // Errata,
 }
 
 impl ToolSet {
@@ -136,15 +141,19 @@ impl ToolSet {
             Self::Default => &[Tool::Search],
             Self::All => &[
                 Tool::Search,
-                Tool::CveSearch,
+                Tool::CveSearchPortal,
+                Tool::CveSearchRag,
                 Tool::DocsSearch,
-                Tool::ErrataSearch,
-                Tool::CveGet,
-                Tool::ErrataGet,
+                Tool::CveGetPortal,
+                Tool::CveGetRag,
             ],
-            Self::Cves => &[Tool::CveSearch, Tool::CveGet],
+            Self::Cves => &[
+                Tool::CveSearchPortal,
+                Tool::CveSearchRag,
+                Tool::CveGetPortal,
+                Tool::CveGetRag,
+            ],
             Self::Docs => &[Tool::DocsSearch],
-            Self::Errata => &[Tool::ErrataSearch, Tool::ErrataGet],
         }
     }
 
@@ -165,10 +174,6 @@ impl ToolSet {
             }
             Self::Docs => {
                 "RHOKP MCP documentation endpoint. Search Red Hat product documentation.".to_owned()
-            }
-            Self::Errata => {
-                "RHOKP MCP errata endpoint. Search and retrieve Red Hat errata advisories."
-                    .to_owned()
             }
         }
     }
@@ -197,32 +202,65 @@ impl MimcpServer {
         self
     }
 
-    async fn hybrid_search_filtered(
+    /// Runs a search for `tool`, dispatching to the lexical Portal index or the
+    /// hybrid PortalRag index based on [`SolrFilter::from`].
+    ///
+    /// Returns `Err` if embedding (PortalRag only) or the Solr query fails.
+    async fn run_search(
         &self,
+        tool: Tool,
         query: &str,
         rows: u32,
-        content_type: &str,
     ) -> Result<Json<SolrResponse>, ErrorData> {
         let rows = rows.clamp(1, MAX_ROWS);
 
-        let vector = self.embedder.embed(query).map_err(|e| {
-            tracing::error!(error = %e, "embedding generation failed");
-            ErrorData::internal_error(format!("Embedding failed: {e}"), None)
-        })?;
+        let result = match SolrFilter::from(tool) {
+            SolrFilter::Portal(filter) => {
+                let filters: Vec<PortalFilter> = filter.into_iter().collect();
+                self.solr.search(query, rows, &filters).await.map_err(|e| {
+                    tracing::error!(error = %e, tool = tool.name(), "solr lexical search failed");
+                    ErrorData::internal_error(format!("Solr query failed: {e}"), None)
+                })?
+            }
+            SolrFilter::PortalRag(filter) => {
+                let vector = self.embedder.embed(query).map_err(|e| {
+                    tracing::error!(error = %e, "embedding generation failed");
+                    ErrorData::internal_error(format!("Embedding failed: {e}"), None)
+                })?;
+                let filters: Vec<PortalRagFilter> = filter.into_iter().collect();
+                self.solr
+                    .hybrid_search(query, &vector, rows, &filters)
+                    .await
+                    .map_err(|e| {
+                        tracing::error!(error = %e, tool = tool.name(), "solr hybrid search failed");
+                        ErrorData::internal_error(format!("Solr hybrid query failed: {e}"), None)
+                    })?
+            }
+        };
 
-        let result = self
-            .solr
-            .hybrid_search(
-                query,
-                &vector,
-                rows,
-                &[SolrFilter::ContentType(content_type)],
-            )
-            .await
-            .map_err(|e| {
-                tracing::error!(error = %e, content_type, "solr hybrid search failed");
-                ErrorData::internal_error(format!("Solr hybrid query failed: {e}"), None)
-            })?;
+        Ok(Json(result))
+    }
+
+    /// Fetches a document by ID for `tool`, using the parent-variant filter for
+    /// the tool's target index.
+    ///
+    /// Returns `Err` if the tool has no lookup filter or the Solr query fails.
+    async fn run_get(&self, tool: Tool, id: &str) -> Result<Json<SolrResponse>, ErrorData> {
+        let filter_fq = match SolrFilter::from(tool) {
+            SolrFilter::Portal(Some(filter)) => filter.to_fq(),
+            SolrFilter::PortalRag(Some(filter)) => filter.to_fq(),
+            SolrFilter::Portal(None) | SolrFilter::PortalRag(None) => {
+                return Err(ErrorData::internal_error(
+                    format!("tool {} has no lookup filter", tool.name()),
+                    None,
+                ));
+            }
+        };
+
+        let result = self.solr.get_by_id(id, &filter_fq).await.map_err(|e| {
+            tracing::error!(error = %e, id, tool = tool.name(), "solr get_by_id failed");
+            ErrorData::internal_error(format!("Solr query failed: {e}"), None)
+        })?;
 
         Ok(Json(result))
     }
@@ -230,22 +268,17 @@ impl MimcpServer {
 
 #[tool_router]
 impl MimcpServer {
-    #[tool(
-        description = "Lexical keyword search across Red Hat product documentation, errata, CVEs, and knowledge base articles. Use search for better relevance."
-    )]
-    async fn search_lexical(
-        &self,
-        Parameters(req): Parameters<LexicalSearchRequest>,
-    ) -> Result<Json<SolrResponse>, ErrorData> {
-        let rows = req.rows.clamp(1, MAX_ROWS);
-
-        let result = self.solr.search(&req.query, rows).await.map_err(|e| {
-            tracing::error!(error = %e, "solr lexical search failed");
-            ErrorData::internal_error(format!("Solr query failed: {e}"), None)
-        })?;
-
-        Ok(Json(result))
-    }
+    // Lexical keyword search. Commented out until the lexical Portal index is
+    // wired up; re-enable alongside the `SearchLexical` `Tool` variant.
+    // #[tool(
+    //     description = "Lexical keyword search across Red Hat product documentation, errata, CVEs, and knowledge base articles. Use search for better relevance."
+    // )]
+    // async fn search_lexical(
+    //     &self,
+    //     Parameters(req): Parameters<LexicalSearchRequest>,
+    // ) -> Result<Json<SolrResponse>, ErrorData> {
+    //     self.run_search(Tool::SearchLexical, &req.query, req.rows).await
+    // }
 
     #[tool(
         description = "Hybrid search combining keyword matching with semantic relevance reranking. Produces more relevant results than plain lexical search. Use this for natural language questions about Red Hat products, CVEs, errata, and documentation."
@@ -254,31 +287,28 @@ impl MimcpServer {
         &self,
         Parameters(req): Parameters<HybridSearchRequest>,
     ) -> Result<Json<SolrResponse>, ErrorData> {
-        let rows = req.rows.clamp(1, MAX_ROWS);
-
-        let vector = self.embedder.embed(&req.query).map_err(|e| {
-            tracing::error!(error = %e, "embedding generation failed");
-            ErrorData::internal_error(format!("Embedding failed: {e}"), None)
-        })?;
-
-        let result = self
-            .solr
-            .hybrid_search(&req.query, &vector, rows, &[])
-            .await
-            .map_err(|e| {
-                tracing::error!(error = %e, "solr hybrid search failed");
-                ErrorData::internal_error(format!("Solr hybrid query failed: {e}"), None)
-            })?;
-
-        Ok(Json(result))
+        self.run_search(Tool::Search, &req.query, req.rows).await
     }
 
-    #[tool(description = "Search Red Hat CVE records using hybrid semantic and keyword matching.")]
-    async fn cve_search(
+    #[tool(
+        description = "Search Red Hat CVE records against the lexical Portal index."
+    )]
+    async fn cve_search_portal(
         &self,
-        Parameters(req): Parameters<ContentSearchRequest>,
+        Parameters(req): Parameters<LexicalSearchRequest>,
     ) -> Result<Json<SolrResponse>, ErrorData> {
-        self.hybrid_search_filtered(&req.query, req.rows, "Cve_chunk")
+        self.run_search(Tool::CveSearchPortal, &req.query, req.rows)
+            .await
+    }
+
+    #[tool(
+        description = "Search Red Hat CVE records using hybrid semantic and keyword matching."
+    )]
+    async fn cve_search_rag(
+        &self,
+        Parameters(req): Parameters<HybridSearchRequest>,
+    ) -> Result<Json<SolrResponse>, ErrorData> {
+        self.run_search(Tool::CveSearchRag, &req.query, req.rows)
             .await
     }
 
@@ -289,54 +319,50 @@ impl MimcpServer {
         &self,
         Parameters(req): Parameters<ContentSearchRequest>,
     ) -> Result<Json<SolrResponse>, ErrorData> {
-        self.hybrid_search_filtered(&req.query, req.rows, "documentation_chunk")
-            .await
+        self.run_search(Tool::DocsSearch, &req.query, req.rows).await
     }
 
+    /// Returns `Err` if the Solr query fails.
     #[tool(
-        description = "Search Red Hat errata advisories using hybrid semantic and keyword matching."
+        description = "Fetch a specific CVE by its identifier (e.g. CVE-2024-1234) from the lexical Portal index."
     )]
-    async fn errata_search(
-        &self,
-        Parameters(req): Parameters<ContentSearchRequest>,
-    ) -> Result<Json<SolrResponse>, ErrorData> {
-        self.hybrid_search_filtered(&req.query, req.rows, "errata_chunk")
-            .await
-    }
-
-    /// Returns `Err` if the Solr query fails.
-    #[tool(description = "Fetch a specific CVE by its identifier (e.g. CVE-2024-1234).")]
-    async fn cve_get(
+    async fn cve_get_portal(
         &self,
         Parameters(req): Parameters<GetByIdRequest>,
     ) -> Result<Json<SolrResponse>, ErrorData> {
-        let result = self
-            .solr
-            .get_by_id(&req.id, "Cve_parent")
-            .await
-            .map_err(|e| {
-                tracing::error!(error = %e, id = %req.id, "solr get_by_id failed");
-                ErrorData::internal_error(format!("Solr query failed: {e}"), None)
-            })?;
-        Ok(Json(result))
+        self.run_get(Tool::CveGetPortal, &req.id).await
     }
 
     /// Returns `Err` if the Solr query fails.
-    #[tool(description = "Fetch a specific erratum by its advisory ID (e.g. RHSA-2024:1234).")]
-    async fn errata_get(
+    #[tool(
+        description = "Fetch a specific CVE by its identifier (e.g. CVE-2024-1234) from the PortalRag index."
+    )]
+    async fn cve_get_rag(
         &self,
         Parameters(req): Parameters<GetByIdRequest>,
     ) -> Result<Json<SolrResponse>, ErrorData> {
-        let result = self
-            .solr
-            .get_by_id(&req.id, "errata_parent")
-            .await
-            .map_err(|e| {
-                tracing::error!(error = %e, id = %req.id, "solr get_by_id failed");
-                ErrorData::internal_error(format!("Solr query failed: {e}"), None)
-            })?;
-        Ok(Json(result))
+        self.run_get(Tool::CveGetRag, &req.id).await
     }
+
+    // Errata tools disabled for now; re-enable alongside the errata `Tool`
+    // variants.
+    // #[tool(
+    //     description = "Search Red Hat errata advisories using hybrid semantic and keyword matching."
+    // )]
+    // async fn errata_search(
+    //     &self,
+    //     Parameters(req): Parameters<ContentSearchRequest>,
+    // ) -> Result<Json<SolrResponse>, ErrorData> {
+    //     self.run_search(Tool::ErrataSearch, &req.query, req.rows).await
+    // }
+
+    // #[tool(description = "Fetch a specific erratum by its advisory ID (e.g. RHSA-2024:1234).")]
+    // async fn errata_get(
+    //     &self,
+    //     Parameters(req): Parameters<GetByIdRequest>,
+    // ) -> Result<Json<SolrResponse>, ErrorData> {
+    //     self.run_get(Tool::ErrataGet, &req.id).await
+    // }
 }
 
 #[cfg(test)]
@@ -382,14 +408,10 @@ mod tests {
 
     /// Catches a new [`Tool`] variant being added without including it in
     /// ToolSet::All, which would make the tool unreachable from /mcp/all.
-    /// `SearchLexical` is intentionally excluded (disabled).
     #[test]
     fn all_toolset_covers_every_enabled_tool() {
         let allowed: HashSet<Tool> = ToolSet::All.allowed_tools().iter().copied().collect();
         for &tool in Tool::ALL {
-            if tool == Tool::SearchLexical {
-                continue;
-            }
             assert!(
                 allowed.contains(&tool),
                 "Tool::{tool:?} missing from ToolSet::All"
@@ -403,7 +425,7 @@ mod tests {
     #[test]
     fn toolset_subsets_are_subsets_of_all() {
         let all: HashSet<Tool> = ToolSet::All.allowed_tools().iter().copied().collect();
-        for variant in [ToolSet::Cves, ToolSet::Docs, ToolSet::Errata] {
+        for variant in [ToolSet::Cves, ToolSet::Docs] {
             for &tool in variant.allowed_tools() {
                 assert!(
                     all.contains(&tool),
@@ -413,13 +435,12 @@ mod tests {
         }
     }
 
-    /// The default endpoint must expose the hybrid `search` tool, never the
-    /// lexical one.
+    /// The default endpoint must expose only the hybrid `search` tool.
     #[test]
     fn default_toolset_is_hybrid_search() {
         assert_eq!(ToolSet::Default.allowed_tools(), &[Tool::Search]);
         assert_eq!(Tool::Search.name(), "search");
-        assert!(!ToolSet::Default.allows(Tool::SearchLexical));
+        assert!(!ToolSet::Default.allows(Tool::CveSearchRag));
     }
 }
 

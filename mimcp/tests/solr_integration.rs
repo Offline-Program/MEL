@@ -9,7 +9,7 @@
 #![cfg(feature = "real-solr")]
 
 use mimcp::embed::Embedder;
-use mimcp::solr::{SolrClient, SolrFilter};
+use mimcp::solr::{PortalRagFilter, SolrClient};
 use url::Url;
 
 fn solr_url() -> Url {
@@ -34,7 +34,7 @@ async fn hybrid_search_content_type_filter_restricts_results() {
         .expect("unfiltered hybrid search should succeed");
 
     let filtered = solr
-        .hybrid_search(query, &vector, 10, &[SolrFilter::ContentType("Cve_chunk")])
+        .hybrid_search(query, &vector, 10, &[PortalRagFilter::ContentType("Cve_chunk")])
         .await
         .expect("filtered hybrid search should succeed");
 
@@ -68,7 +68,7 @@ async fn hybrid_search_content_type_docs_only() {
     let vector = embedder.embed(query).expect("embedding should succeed");
 
     let result = solr
-        .hybrid_search(query, &vector, 10, &[SolrFilter::ContentType("documentation_chunk")])
+        .hybrid_search(query, &vector, 10, &[PortalRagFilter::ContentType("documentation_chunk")])
         .await
         .expect("docs-only hybrid search should succeed");
 
@@ -95,7 +95,7 @@ async fn hybrid_search_content_type_errata_only() {
     let vector = embedder.embed(query).expect("embedding should succeed");
 
     let result = solr
-        .hybrid_search(query, &vector, 10, &[SolrFilter::ContentType("errata_chunk")])
+        .hybrid_search(query, &vector, 10, &[PortalRagFilter::ContentType("errata_chunk")])
         .await
         .expect("errata-only hybrid search should succeed");
 
@@ -127,7 +127,7 @@ async fn hybrid_search_product_filter_ocp() {
             query,
             &vector,
             10,
-            &[SolrFilter::Product("openshift_container_platform")],
+            &[PortalRagFilter::Product("openshift_container_platform")],
         )
         .await
         .expect("OCP product-filtered search should succeed");
@@ -160,7 +160,7 @@ async fn hybrid_search_product_filter_rhel() {
             query,
             &vector,
             10,
-            &[SolrFilter::Product("red_hat_enterprise_linux")],
+            &[PortalRagFilter::Product("red_hat_enterprise_linux")],
         )
         .await
         .expect("RHEL product-filtered search should succeed");
@@ -194,8 +194,8 @@ async fn hybrid_search_product_and_version_ocp_4_20() {
             &vector,
             10,
             &[
-                SolrFilter::Product("openshift_container_platform"),
-                SolrFilter::ProductVersion("4.20"),
+                PortalRagFilter::Product("openshift_container_platform"),
+                PortalRagFilter::ProductVersion("4.20"),
             ],
         )
         .await
@@ -236,8 +236,8 @@ async fn hybrid_search_product_and_version_rhel_10() {
             &vector,
             10,
             &[
-                SolrFilter::Product("red_hat_enterprise_linux"),
-                SolrFilter::ProductVersion("10"),
+                PortalRagFilter::Product("red_hat_enterprise_linux"),
+                PortalRagFilter::ProductVersion("10"),
             ],
         )
         .await
@@ -277,7 +277,7 @@ async fn hybrid_search_version_filter_narrows_product_results() {
             query,
             &vector,
             20,
-            &[SolrFilter::Product("openshift_container_platform")],
+            &[PortalRagFilter::Product("openshift_container_platform")],
         )
         .await
         .expect("product-only search should succeed");
@@ -288,8 +288,8 @@ async fn hybrid_search_version_filter_narrows_product_results() {
             &vector,
             20,
             &[
-                SolrFilter::Product("openshift_container_platform"),
-                SolrFilter::ProductVersion("4.20"),
+                PortalRagFilter::Product("openshift_container_platform"),
+                PortalRagFilter::ProductVersion("4.20"),
             ],
         )
         .await
@@ -308,7 +308,7 @@ async fn lexical_search_returns_results() {
     let solr = solr_client();
 
     let result = solr
-        .search("CVE kernel", 5)
+        .search("CVE kernel", 5, &[])
         .await
         .expect("lexical search should succeed");
 

@@ -66,7 +66,7 @@ pub async fn mcp_router(config: MimcpConfig) -> Result<axum::Router> {
 
     let routes: &[(&str, ToolSet)] = &[
         // Disabling the other routes so we can focus on the default hybrid search toolset first.  Re-enable the others as our coordination with Lightforge evolves.
-        // ("/mcp/cves", ToolSet::Cves),
+        ("/mcp/cves", ToolSet::Cves),
         // ("/mcp/docs", ToolSet::Docs),
         // ("/mcp/errata", ToolSet::Errata),
         // ("/mcp/all", ToolSet::All),
