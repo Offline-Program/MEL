@@ -12,6 +12,11 @@ use mimcp::embed::Embedder;
 use mimcp::solr::{PortalRagFilter, SolrClient};
 use url::Url;
 
+/// Directory holding the ONNX model and tokenizer, relative to this crate.
+fn model_dir() -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../models")
+}
+
 fn solr_url() -> Url {
     let raw = std::env::var("SOLR_URL").expect("SOLR_URL must be set for integration tests");
     Url::parse(&raw).expect("SOLR_URL must be a valid URL")
@@ -24,7 +29,7 @@ fn solr_client() -> std::sync::Arc<SolrClient> {
 #[tokio::test]
 async fn hybrid_search_content_type_filter_restricts_results() {
     let solr = solr_client();
-    let embedder = Embedder::new().expect("embedder should load");
+    let embedder = Embedder::new(model_dir()).expect("embedder should load");
     let query = "kernel vulnerability";
     let vector = embedder.embed(query).expect("embedding should succeed");
 
@@ -63,7 +68,7 @@ async fn hybrid_search_content_type_filter_restricts_results() {
 #[tokio::test]
 async fn hybrid_search_content_type_docs_only() {
     let solr = solr_client();
-    let embedder = Embedder::new().expect("embedder should load");
+    let embedder = Embedder::new(model_dir()).expect("embedder should load");
     let query = "installing openshift";
     let vector = embedder.embed(query).expect("embedding should succeed");
 
@@ -90,7 +95,7 @@ async fn hybrid_search_content_type_docs_only() {
 #[tokio::test]
 async fn hybrid_search_content_type_errata_only() {
     let solr = solr_client();
-    let embedder = Embedder::new().expect("embedder should load");
+    let embedder = Embedder::new(model_dir()).expect("embedder should load");
     let query = "kernel security update";
     let vector = embedder.embed(query).expect("embedding should succeed");
 
@@ -118,7 +123,7 @@ async fn hybrid_search_content_type_errata_only() {
 #[tokio::test]
 async fn hybrid_search_product_filter_ocp() {
     let solr = solr_client();
-    let embedder = Embedder::new().expect("embedder should load");
+    let embedder = Embedder::new(model_dir()).expect("embedder should load");
     let query = "cluster installation";
     let vector = embedder.embed(query).expect("embedding should succeed");
 
@@ -151,7 +156,7 @@ async fn hybrid_search_product_filter_ocp() {
 #[tokio::test]
 async fn hybrid_search_product_filter_rhel() {
     let solr = solr_client();
-    let embedder = Embedder::new().expect("embedder should load");
+    let embedder = Embedder::new(model_dir()).expect("embedder should load");
     let query = "kernel configuration";
     let vector = embedder.embed(query).expect("embedding should succeed");
 
@@ -184,7 +189,7 @@ async fn hybrid_search_product_filter_rhel() {
 #[tokio::test]
 async fn hybrid_search_product_and_version_ocp_4_20() {
     let solr = solr_client();
-    let embedder = Embedder::new().expect("embedder should load");
+    let embedder = Embedder::new(model_dir()).expect("embedder should load");
     let query = "cluster installation";
     let vector = embedder.embed(query).expect("embedding should succeed");
 
@@ -226,7 +231,7 @@ async fn hybrid_search_product_and_version_ocp_4_20() {
 #[tokio::test]
 async fn hybrid_search_product_and_version_rhel_10() {
     let solr = solr_client();
-    let embedder = Embedder::new().expect("embedder should load");
+    let embedder = Embedder::new(model_dir()).expect("embedder should load");
     let query = "kernel configuration";
     let vector = embedder.embed(query).expect("embedding should succeed");
 
@@ -268,7 +273,7 @@ async fn hybrid_search_product_and_version_rhel_10() {
 #[tokio::test]
 async fn hybrid_search_version_filter_narrows_product_results() {
     let solr = solr_client();
-    let embedder = Embedder::new().expect("embedder should load");
+    let embedder = Embedder::new(model_dir()).expect("embedder should load");
     let query = "cluster installation";
     let vector = embedder.embed(query).expect("embedding should succeed");
 

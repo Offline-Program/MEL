@@ -7,6 +7,7 @@ pub mod embed;
 pub mod solr;
 pub mod tools;
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::Result;
@@ -24,6 +25,9 @@ use crate::tools::{MimcpServer, ToolSet};
 pub struct MimcpConfig {
     /// Base URL of the Solr instance (e.g. `http://localhost:8983`).
     pub solr_url: Url,
+    /// Directory containing the ONNX embedding model (`model.onnx`) and
+    /// tokenizer (`tokenizer.json`).
+    pub model_dir: PathBuf,
     /// Token used to signal graceful shutdown of the MCP service.
     pub cancellation_token: CancellationToken,
 }
@@ -45,7 +49,7 @@ pub async fn mcp_router(config: MimcpConfig) -> Result<axum::Router> {
     tracing::info!("solr health check passed");
 
     tracing::info!("loading embedding model");
-    let embedder = Arc::new(Embedder::new()?);
+    let embedder = Arc::new(Embedder::new(&config.model_dir)?);
     tracing::info!("embedding model loaded");
 
     let ct = config.cancellation_token;

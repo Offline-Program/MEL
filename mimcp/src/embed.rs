@@ -1,16 +1,19 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Copyright (C) Red Hat, Inc.
 
-use std::io::Cursor;
+use std::fs::File;
+use std::path::Path;
 use std::sync::Arc;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use tract_onnx::prelude::*;
 use tract_onnx::tract_core::dims;
 use tokenizers::Tokenizer;
 
-const MODEL_BYTES: &[u8] = include_bytes!("../../models/model.onnx");
-const TOKENIZER_JSON: &str = include_str!("../../models/tokenizer.json");
+/// File name of the ONNX embedding model within the model directory.
+const MODEL_FILE: &str = "model.onnx";
+/// File name of the tokenizer configuration within the model directory.
+const TOKENIZER_FILE: &str = "tokenizer.json";
 
 type Model = RunnableModel<TypedFact, Box<dyn TypedOp>>;
 
@@ -24,13 +27,21 @@ pub struct Embedder {
 }
 
 impl Embedder {
-    /// Loads the embedded ONNX model and tokenizer.
+    /// Loads the ONNX model and tokenizer from `model_dir`.
     ///
-    /// Returns `Err` if the ONNX model bytes are invalid, shape inference
-    /// or optimization fails, or the tokenizer JSON cannot be parsed.
-    pub fn new() -> Result<Self> {
-        let mut cursor = Cursor::new(MODEL_BYTES);
-        let inference_model = tract_onnx::onnx().model_for_read(&mut cursor)?;
+    /// Expects `model.onnx` and `tokenizer.json` to exist inside `model_dir`.
+    ///
+    /// Returns `Err` if either file cannot be read, the ONNX model bytes are
+    /// invalid, shape inference or optimization fails, or the tokenizer JSON
+    /// cannot be parsed.
+    pub fn new(model_dir: impl AsRef<Path>) -> Result<Self> {
+        let model_dir = model_dir.as_ref();
+        let model_path = model_dir.join(MODEL_FILE);
+        let tokenizer_path = model_dir.join(TOKENIZER_FILE);
+
+        let mut model_file = File::open(&model_path)
+            .with_context(|| format!("failed to open ONNX model at {}", model_path.display()))?;
+        let inference_model = tract_onnx::onnx().model_for_read(&mut model_file)?;
         let s = inference_model.sym("S");
 
         let model = inference_model
@@ -39,8 +50,9 @@ impl Embedder {
             .into_optimized()?
             .into_runnable()?;
 
-        let tokenizer = Tokenizer::from_bytes(TOKENIZER_JSON.as_bytes())
-            .map_err(|e| anyhow::anyhow!("failed to load tokenizer: {e}"))?;
+        let tokenizer = Tokenizer::from_file(&tokenizer_path).map_err(|e| {
+            anyhow::anyhow!("failed to load tokenizer at {}: {e}", tokenizer_path.display())
+        })?;
 
         Ok(Self { model, tokenizer })
     }

@@ -20,6 +20,7 @@
 //! thread running a tokio runtime that waits for Solr to become healthy, then
 //! serves the MCP router on an internal-only address for Apache to reverse-proxy.
 
+use std::path::PathBuf;
 use std::time::Duration;
 
 use mimcp::{mcp_router, MimcpConfig};
@@ -34,6 +35,10 @@ const SOLR_URL: &str = "http://localhost:8983";
 
 /// Address the MCP server binds to. Internal only - Apache proxies `/mcp` here.
 const BIND_ADDR: &str = "127.0.0.1:3001";
+
+/// Directory holding the ONNX embedding model and tokenizer inside the final
+/// image. Populated by Containerfile.main.
+const MODEL_DIR: &str = "/opt/models";
 
 /// Maximum number of Solr readiness poll attempts before giving up.
 const SOLR_WAIT_ATTEMPTS: u32 = 60;
@@ -87,6 +92,7 @@ async fn run(ct: CancellationToken) -> Result<(), Box<dyn std::error::Error>> {
 
     let router = mcp_router(MimcpConfig {
         solr_url,
+        model_dir: PathBuf::from(MODEL_DIR),
         cancellation_token: ct.child_token(),
     })
     .await?;
