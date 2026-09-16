@@ -42,15 +42,27 @@ pub enum PortalFilter<'a> {
     DocumentKind(&'a str),
 }
 
+/// A single product restriction: a product slug and the versions to narrow it
+/// to. Analogous to a Solr-style `fq` filter, but structured so the server (not
+/// the client) renders the `fq` clause.
+///
+/// An empty `versions` slice matches the product regardless of version.
+pub struct ProductVersions<'a> {
+    /// Product slug to match exactly (e.g. `openshift_container_platform`).
+    pub product: &'a str,
+    /// Versions of this product to include, OR-combined. Empty means all
+    /// versions.
+    pub versions: &'a [String],
+}
+
 /// Typed filter for the [`Index::PortalRag`] schema, rendered as a Solr `fq`
 /// clause.
 pub enum PortalRagFilter<'a> {
     /// Filter by `content_type` (e.g. `Cve_chunk`, `documentation_chunk`).
     ContentType(&'a str),
-    /// Filter by `product` slug (e.g. `openshift_container_platform`).
-    Product(&'a str),
-    /// Filter by `product_version` (e.g. `4.20`, `10`).
-    ProductVersion(&'a str),
+    /// Restrict results to a set of products, each optionally narrowed to
+    /// versions. Rendered as a single OR-of-products `fq` clause.
+    Products(&'a [ProductVersions<'a>]),
     /// Filter by `category` (e.g. `documentation`).
     Category(&'a str),
 }
@@ -104,13 +116,56 @@ impl PortalFilter<'_> {
 
 impl PortalRagFilter<'_> {
     /// Renders this filter as a Solr `fq` clause string.
+    ///
+    /// [`Self::Products`] carries client-supplied product/version values (the
+    /// `search` tool exposes them as parameters), so each value is quoted and
+    /// escaped via [`quote_solr_value`] to prevent it from breaking out of its
+    /// clause and injecting arbitrary Solr query syntax. [`Self::ContentType`]
+    /// and [`Self::Category`] are only ever constructed from trusted in-crate
+    /// constants, so they are rendered verbatim.
     pub(crate) fn to_fq(&self) -> String {
         match self {
             Self::ContentType(v) => format!("content_type:{v}"),
-            Self::Product(v) => format!("product:{v}"),
-            Self::ProductVersion(v) => format!("product_version:{v}"),
+            Self::Products(products) => render_products_fq(products),
             Self::Category(v) => format!("category:{v}"),
         }
+    }
+}
+
+/// Renders a set of product restrictions into a single Solr `fq` clause.
+///
+/// Products are OR-combined; within a product, its versions are OR-combined and
+/// AND-ed with the product match. A product with no versions matches regardless
+/// of version. All product and version values are client-supplied, so they are
+/// quoted and escaped via [`quote_solr_value`] to keep each value contained
+/// within its clause.
+///
+/// Returns an empty string when `products` is empty; callers must not add an
+/// empty `fq` clause (the search path only pushes this filter when at least one
+/// product is present).
+fn render_products_fq(products: &[ProductVersions<'_>]) -> String {
+    let clauses: Vec<String> = products
+        .iter()
+        .map(|pv| {
+            let product = format!("product:{}", quote_solr_value(pv.product));
+            if pv.versions.is_empty() {
+                product
+            } else {
+                let versions = pv
+                    .versions
+                    .iter()
+                    .map(|v| format!("product_version:{}", quote_solr_value(v)))
+                    .collect::<Vec<_>>()
+                    .join(" OR ");
+                format!("({product} AND ({versions}))")
+            }
+        })
+        .collect();
+
+    match clauses.len() {
+        0 => String::new(),
+        1 => clauses.into_iter().next().unwrap_or_default(),
+        _ => format!("({})", clauses.join(" OR ")),
     }
 }
 
@@ -377,6 +432,26 @@ impl SolrParams {
     }
 }
 
+/// Wraps a client-supplied `fq` value in a Solr phrase quote.
+///
+/// The value is enclosed in double quotes so that whitespace and Solr query
+/// operators inside it are treated as literal text rather than query syntax,
+/// preventing a value from breaking out of its `fq` clause. Within a quoted
+/// phrase only the backslash and the double quote are special, so those two
+/// characters are backslash-escaped.
+fn quote_solr_value(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for c in s.chars() {
+        if matches!(c, '\\' | '"') {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out.push('"');
+    out
+}
+
 /// Escapes characters that have special meaning in Solr query syntax.
 fn escape_solr_query(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 8);
@@ -559,20 +634,73 @@ mod tests {
         );
     }
 
+    /// Helper: build a [`ProductVersions`] from a product slug and versions.
+    fn pv<'a>(product: &'a str, versions: &'a [String]) -> ProductVersions<'a> {
+        ProductVersions { product, versions }
+    }
+
     #[test]
-    fn portal_rag_filter_product_renders_correctly() {
+    fn products_filter_single_product_no_versions_renders_bare_clause() {
+        let items = [pv("openshift_container_platform", &[])];
         assert_eq!(
-            PortalRagFilter::Product("openshift_container_platform").to_fq(),
-            "product:openshift_container_platform"
+            PortalRagFilter::Products(&items).to_fq(),
+            "product:\"openshift_container_platform\""
         );
     }
 
     #[test]
-    fn portal_rag_filter_product_version_renders_correctly() {
+    fn products_filter_single_product_with_versions_ands_version_or_group() {
+        let versions = [s("4.19"), s("4.20")];
+        let items = [pv("openshift_container_platform", &versions)];
         assert_eq!(
-            PortalRagFilter::ProductVersion("4.20").to_fq(),
-            "product_version:4.20"
+            PortalRagFilter::Products(&items).to_fq(),
+            "(product:\"openshift_container_platform\" AND \
+             (product_version:\"4.19\" OR product_version:\"4.20\"))"
         );
+    }
+
+    #[test]
+    fn products_filter_multiple_products_are_or_combined() {
+        let ocp_versions = [s("4.20")];
+        let items = [
+            pv("openshift_container_platform", &ocp_versions),
+            pv("rhel", &[]),
+        ];
+        assert_eq!(
+            PortalRagFilter::Products(&items).to_fq(),
+            "((product:\"openshift_container_platform\" AND \
+             (product_version:\"4.20\")) OR product:\"rhel\")"
+        );
+    }
+
+    #[test]
+    fn products_filter_product_with_spaces_is_quoted() {
+        let items = [pv("Red Hat Enterprise Linux", &[])];
+        assert_eq!(
+            PortalRagFilter::Products(&items).to_fq(),
+            "product:\"Red Hat Enterprise Linux\""
+        );
+    }
+
+    #[test]
+    fn products_filter_escapes_injection_attempt() {
+        // A value that tries to close the phrase and inject an OR clause must
+        // stay contained: the embedded quote is backslash-escaped.
+        let items = [pv("x\" OR is_chunk:true OR product:\"y", &[])];
+        assert_eq!(
+            PortalRagFilter::Products(&items).to_fq(),
+            "product:\"x\\\" OR is_chunk:true OR product:\\\"y\""
+        );
+    }
+
+    #[test]
+    fn products_filter_empty_renders_empty_string() {
+        assert_eq!(PortalRagFilter::Products(&[]).to_fq(), "");
+    }
+
+    #[test]
+    fn quote_solr_value_escapes_backslash_and_quote() {
+        assert_eq!(quote_solr_value(r#"a\b"c"#), r#""a\\b\"c""#);
     }
 
     #[test]

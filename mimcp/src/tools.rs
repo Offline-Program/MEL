@@ -10,7 +10,9 @@ use rmcp::service::RequestContext;
 use rmcp::{schemars, tool, tool_handler, tool_router, RoleServer, ServerHandler};
 
 use crate::embed::Embedder;
-use crate::solr::{PortalFilter, PortalRagFilter, SolrClient, SolrFilter, SolrResponse};
+use crate::solr::{
+    PortalFilter, PortalRagFilter, ProductVersions, SolrClient, SolrFilter, SolrResponse,
+};
 
 /// Upper bound on the number of results a single search can return.
 const MAX_ROWS: u32 = 20;
@@ -90,6 +92,26 @@ pub struct LexicalSearchRequest {
     pub rows: u32,
 }
 
+/// A single product restriction for the structured search filter: a product
+/// and, optionally, the versions of that product to narrow results to.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct ProductFilter {
+    #[schemars(
+        description = "Product slug to match exactly, e.g. \"openshift_container_platform\". \
+                       Matched exactly against the document's product field (no wildcards)."
+    )]
+    pub product: String,
+
+    #[schemars(
+        description = "Versions of this product to include, e.g. [\"4.19\", \"4.20\"]. \
+                       Matched exactly against the document's product_version field and \
+                       OR-combined. Omit or leave empty to match the product regardless of \
+                       version."
+    )]
+    #[serde(default)]
+    pub versions: Vec<String>,
+}
+
 /// Parameters for the `search` (hybrid) MCP tool.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct HybridSearchRequest {
@@ -99,6 +121,15 @@ pub struct HybridSearchRequest {
     #[schemars(description = "Maximum number of results to return (1-20, default 5)")]
     #[serde(default = "default_rows")]
     pub rows: u32,
+
+    #[schemars(
+        description = "Optional structured product filter restricting results to the listed \
+                       products (OR-combined). Each entry names a product and, optionally, the \
+                       versions of that product to include. Omit or leave empty to search across \
+                       all products."
+    )]
+    #[serde(default)]
+    pub products: Vec<ProductFilter>,
 }
 
 /// Parameters for content-type-specific search tools.
@@ -205,12 +236,18 @@ impl MimcpServer {
     /// Runs a search for `tool`, dispatching to the lexical Portal index or the
     /// hybrid PortalRag index based on [`SolrFilter::from`].
     ///
+    /// `products`, when non-empty, restricts hybrid (PortalRag) results via an
+    /// additional OR-of-products `fq` clause the server builds from the
+    /// structured filter. It is ignored for the lexical Portal index, which does
+    /// not carry the `product`/`product_version` fields.
+    ///
     /// Returns `Err` if embedding (PortalRag only) or the Solr query fails.
     async fn run_search(
         &self,
         tool: Tool,
         query: &str,
         rows: u32,
+        products: &[ProductFilter],
     ) -> Result<Json<SolrResponse>, ErrorData> {
         let rows = rows.clamp(1, MAX_ROWS);
 
@@ -227,7 +264,17 @@ impl MimcpServer {
                     tracing::error!(error = %e, "embedding generation failed");
                     ErrorData::internal_error(format!("Embedding failed: {e}"), None)
                 })?;
-                let filters: Vec<PortalRagFilter> = filter.into_iter().collect();
+                let mut filters: Vec<PortalRagFilter> = filter.into_iter().collect();
+                let product_versions: Vec<ProductVersions> = products
+                    .iter()
+                    .map(|p| ProductVersions {
+                        product: &p.product,
+                        versions: &p.versions,
+                    })
+                    .collect();
+                if !product_versions.is_empty() {
+                    filters.push(PortalRagFilter::Products(&product_versions));
+                }
                 self.solr
                     .hybrid_search(query, &vector, rows, &filters)
                     .await
@@ -287,7 +334,8 @@ impl MimcpServer {
         &self,
         Parameters(req): Parameters<HybridSearchRequest>,
     ) -> Result<Json<SolrResponse>, ErrorData> {
-        self.run_search(Tool::Search, &req.query, req.rows).await
+        self.run_search(Tool::Search, &req.query, req.rows, &req.products)
+            .await
     }
 
     #[tool(
@@ -297,7 +345,7 @@ impl MimcpServer {
         &self,
         Parameters(req): Parameters<LexicalSearchRequest>,
     ) -> Result<Json<SolrResponse>, ErrorData> {
-        self.run_search(Tool::CveSearchPortal, &req.query, req.rows)
+        self.run_search(Tool::CveSearchPortal, &req.query, req.rows, &[])
             .await
     }
 
@@ -308,7 +356,7 @@ impl MimcpServer {
         &self,
         Parameters(req): Parameters<HybridSearchRequest>,
     ) -> Result<Json<SolrResponse>, ErrorData> {
-        self.run_search(Tool::CveSearchRag, &req.query, req.rows)
+        self.run_search(Tool::CveSearchRag, &req.query, req.rows, &req.products)
             .await
     }
 
@@ -319,7 +367,8 @@ impl MimcpServer {
         &self,
         Parameters(req): Parameters<ContentSearchRequest>,
     ) -> Result<Json<SolrResponse>, ErrorData> {
-        self.run_search(Tool::DocsSearch, &req.query, req.rows).await
+        self.run_search(Tool::DocsSearch, &req.query, req.rows, &[])
+            .await
     }
 
     /// Returns `Err` if the Solr query fails.
@@ -441,6 +490,36 @@ mod tests {
         assert_eq!(ToolSet::Default.allowed_tools(), &[Tool::Search]);
         assert_eq!(Tool::Search.name(), "search");
         assert!(!ToolSet::Default.allows(Tool::CveSearchRag));
+    }
+
+    /// The structured `products` filter must default to empty when a client
+    /// omits it, preserving the pre-filtering request contract.
+    #[test]
+    fn hybrid_request_products_default_to_empty() {
+        let req: HybridSearchRequest =
+            serde_json::from_value(serde_json::json!({ "query": "how to configure sso" }))
+                .expect("minimal request should deserialize");
+        assert_eq!(req.rows, default_rows());
+        assert!(req.products.is_empty());
+    }
+
+    /// A client supplying a structured `products` filter must have it parsed
+    /// into the request so `run_search` can turn it into an `fq` clause.
+    #[test]
+    fn hybrid_request_parses_products_filter() {
+        let req: HybridSearchRequest = serde_json::from_value(serde_json::json!({
+            "query": "how to configure sso",
+            "products": [
+                {"product": "openshift_container_platform", "versions": ["4.19", "4.20"]},
+                {"product": "rhel"},
+            ],
+        }))
+        .expect("request with a products filter should deserialize");
+        assert_eq!(req.products.len(), 2);
+        assert_eq!(req.products[0].product, "openshift_container_platform");
+        assert_eq!(req.products[0].versions, vec!["4.19", "4.20"]);
+        assert_eq!(req.products[1].product, "rhel");
+        assert!(req.products[1].versions.is_empty());
     }
 }
 
