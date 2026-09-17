@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["./mel", "./mel_libs"]
+members = ["./mel", "./mel_libs", "./mimcp"]
 
 # profiles for MEL builds.  These exist so that a podman build-arg `MEL_PROFILE` can be
 # set to `debug` or `release`, then passed to `cargo build --profile ${MEL_PROFILE}`

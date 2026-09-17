@@ -3,3 +3,6 @@ target/
 
 # Don't check anything inside mel/vendor
 !mel/vendor/**
+
+# ONNX embedding model files (downloaded via download-embedding-model.sh)
+models/
