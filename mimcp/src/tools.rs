@@ -338,9 +338,7 @@ impl MimcpServer {
             .await
     }
 
-    #[tool(
-        description = "Search Red Hat CVE records against the lexical Portal index."
-    )]
+    #[tool(description = "Search Red Hat CVE records against the lexical Portal index.")]
     async fn cve_search_portal(
         &self,
         Parameters(req): Parameters<LexicalSearchRequest>,
@@ -349,9 +347,7 @@ impl MimcpServer {
             .await
     }
 
-    #[tool(
-        description = "Search Red Hat CVE records using hybrid semantic and keyword matching."
-    )]
+    #[tool(description = "Search Red Hat CVE records using hybrid semantic and keyword matching.")]
     async fn cve_search_rag(
         &self,
         Parameters(req): Parameters<HybridSearchRequest>,

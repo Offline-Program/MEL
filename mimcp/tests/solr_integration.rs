@@ -39,7 +39,12 @@ async fn hybrid_search_content_type_filter_restricts_results() {
         .expect("unfiltered hybrid search should succeed");
 
     let filtered = solr
-        .hybrid_search(query, &vector, 10, &[PortalRagFilter::ContentType("Cve_chunk")])
+        .hybrid_search(
+            query,
+            &vector,
+            10,
+            &[PortalRagFilter::ContentType("Cve_chunk")],
+        )
         .await
         .expect("filtered hybrid search should succeed");
 
@@ -73,7 +78,12 @@ async fn hybrid_search_content_type_docs_only() {
     let vector = embedder.embed(query).expect("embedding should succeed");
 
     let result = solr
-        .hybrid_search(query, &vector, 10, &[PortalRagFilter::ContentType("documentation_chunk")])
+        .hybrid_search(
+            query,
+            &vector,
+            10,
+            &[PortalRagFilter::ContentType("documentation_chunk")],
+        )
         .await
         .expect("docs-only hybrid search should succeed");
 
@@ -100,7 +110,12 @@ async fn hybrid_search_content_type_errata_only() {
     let vector = embedder.embed(query).expect("embedding should succeed");
 
     let result = solr
-        .hybrid_search(query, &vector, 10, &[PortalRagFilter::ContentType("errata_chunk")])
+        .hybrid_search(
+            query,
+            &vector,
+            10,
+            &[PortalRagFilter::ContentType("errata_chunk")],
+        )
         .await
         .expect("errata-only hybrid search should succeed");
 
@@ -118,7 +133,6 @@ async fn hybrid_search_content_type_errata_only() {
         );
     }
 }
-
 
 #[tokio::test]
 async fn hybrid_search_product_filter_ocp() {
@@ -143,7 +157,10 @@ async fn hybrid_search_product_filter_ocp() {
     );
 
     for doc in &result.response.docs {
-        let products = doc.product.as_ref().expect("product field should be present");
+        let products = doc
+            .product
+            .as_ref()
+            .expect("product field should be present");
         let product_arr = products.as_array().expect("product should be an array");
         let slugs: Vec<&str> = product_arr.iter().filter_map(|v| v.as_str()).collect();
         assert!(
@@ -176,7 +193,10 @@ async fn hybrid_search_product_filter_rhel() {
     );
 
     for doc in &result.response.docs {
-        let products = doc.product.as_ref().expect("product field should be present");
+        let products = doc
+            .product
+            .as_ref()
+            .expect("product field should be present");
         let product_arr = products.as_array().expect("product should be an array");
         let slugs: Vec<&str> = product_arr.iter().filter_map(|v| v.as_str()).collect();
         assert!(
@@ -212,7 +232,10 @@ async fn hybrid_search_product_and_version_ocp_4_20() {
     );
 
     for doc in &result.response.docs {
-        let products = doc.product.as_ref().expect("product field should be present");
+        let products = doc
+            .product
+            .as_ref()
+            .expect("product field should be present");
         let product_arr = products.as_array().expect("product should be an array");
         let slugs: Vec<&str> = product_arr.iter().filter_map(|v| v.as_str()).collect();
         assert!(
@@ -254,7 +277,10 @@ async fn hybrid_search_product_and_version_rhel_10() {
     );
 
     for doc in &result.response.docs {
-        let products = doc.product.as_ref().expect("product field should be present");
+        let products = doc
+            .product
+            .as_ref()
+            .expect("product field should be present");
         let product_arr = products.as_array().expect("product should be an array");
         let slugs: Vec<&str> = product_arr.iter().filter_map(|v| v.as_str()).collect();
         assert!(

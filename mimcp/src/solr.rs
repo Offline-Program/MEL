@@ -86,9 +86,7 @@ impl From<Tool> for SolrFilter {
             // `is_chunk:true` base filter of the PortalRag index.
             Tool::Search => SolrFilter::PortalRag(None),
             // CVE search, one version per index.
-            Tool::CveSearchPortal => {
-                SolrFilter::Portal(Some(PortalFilter::DocumentKind("Cve")))
-            }
+            Tool::CveSearchPortal => SolrFilter::Portal(Some(PortalFilter::DocumentKind("Cve"))),
             Tool::CveSearchRag => {
                 SolrFilter::PortalRag(Some(PortalRagFilter::ContentType("Cve_chunk")))
             }
@@ -623,7 +621,10 @@ mod tests {
 
     #[test]
     fn portal_filter_document_kind_renders_correctly() {
-        assert_eq!(PortalFilter::DocumentKind("Cve").to_fq(), "documentKind:Cve");
+        assert_eq!(
+            PortalFilter::DocumentKind("Cve").to_fq(),
+            "documentKind:Cve"
+        );
     }
 
     #[test]

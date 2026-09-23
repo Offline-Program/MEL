@@ -6,9 +6,9 @@ use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
+use tokenizers::Tokenizer;
 use tract_onnx::prelude::*;
 use tract_onnx::tract_core::dims;
-use tokenizers::Tokenizer;
 
 /// File name of the ONNX embedding model within the model directory.
 const MODEL_FILE: &str = "model.onnx";
@@ -51,7 +51,10 @@ impl Embedder {
             .into_runnable()?;
 
         let tokenizer = Tokenizer::from_file(&tokenizer_path).map_err(|e| {
-            anyhow::anyhow!("failed to load tokenizer at {}: {e}", tokenizer_path.display())
+            anyhow::anyhow!(
+                "failed to load tokenizer at {}: {e}",
+                tokenizer_path.display()
+            )
         })?;
 
         Ok(Self { model, tokenizer })
