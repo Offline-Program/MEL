@@ -64,7 +64,17 @@ pub async fn mcp_router(config: MimcpConfig) -> Result<axum::Router> {
                     .with_tool_set(tool_set.clone()))
             },
             LocalSessionManager::default().into(),
-            StreamableHttpServerConfig::default().with_cancellation_token(ct.clone()),
+            // Stateless mode: each POST is self-contained, so no per-session
+            // state is held in a single pod's memory. This lets the MCP server
+            // sit behind a multi-pod load balancer without session affinity or a
+            // shared session store (otherwise round-robin yields "session not
+            // found" when a request lands on a pod that didn't create the
+            // session). json_response returns plain JSON instead of SSE, which
+            // is appropriate for fast, synchronous operations with simple integrations.
+            StreamableHttpServerConfig::default()
+                .with_cancellation_token(ct.clone())
+                .with_stateful_mode(false)
+                .with_json_response(true),
         )
     };
 
