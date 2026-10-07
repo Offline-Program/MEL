@@ -32,22 +32,42 @@ use mel_libs::crypt::{create_kek, dec, iv, AESParam};
 use mel_libs::error::MelError;
 use mel_libs::infer::init_inference;
 use mel_libs::token_map::{InvalidTokenMap, TokenMap};
+use std::io::{Read, Write};
+use std::net::TcpStream;
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::OnceLock;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use std::{env, io};
 use std::{fs, process};
 
-/// The location of the solr index in encrypted builds.
-const ENCRYPTED_SOLR_INDEX_PATH: &str = "/opt/solr/server/solr/portal/data.tar.gz.enc";
-/// The location of the solr index after decryption, or in plaintext builds.
-const DECRYPTED_SOLR_INDEX_PATH: &str = "/opt/solr/server/solr/portal/data.tar.gz";
-/// The path to the solr index directory.
-const SOLR_PORTAL_PATH: &str = "/opt/solr/server/solr/portal";
+/// The location of the encrypted solr index — the subscription-only `portal-protected` collection
+/// (the public `portal` collection ships unencrypted).
+const ENCRYPTED_SOLR_INDEX_PATH: &str =
+    "/opt/solr/server/solr/portal-protected/data.tar.gz.enc";
+/// The location of the solr index after decryption.
+const DECRYPTED_SOLR_INDEX_PATH: &str = "/opt/solr/server/solr/portal-protected/data.tar.gz";
+/// The path to the protected solr collection directory.
+const SOLR_PROTECTED_PATH: &str = "/opt/solr/server/solr/portal-protected";
+/// Comma-separated shard list pointing Solr's distributed `/select` handler at both the public
+/// `portal` collection and the subscription-only `portal-protected` collection, so that search
+/// federates across public and protected content transparently.  Exported to the environment for
+/// `run-solr`, which forwards it as the `mimir.search.shards` JVM system property.
+const MIMIR_SEARCH_SHARDS: &str =
+    "localhost:8983/solr/portal,localhost:8983/solr/portal-protected";
 /// The path inside the final image to the tokens tsv file.  This file is created by MOE and copied
 /// into the image in Containerfile.main.
 const TOKENS_TSV_PATH: &str = "/opt/tokens";
+
+/// The `host:port` Solr listens on inside the container.
+const SOLR_ADDR: &str = "127.0.0.1:8983";
+/// The maximum time to wait for all queried Solr cores to answer their ping handler before
+/// starting httpd anyway.  Bounded so a Solr failure can't hang the container forever.
+const SOLR_READINESS_TIMEOUT: Duration = Duration::from_secs(120);
+/// How long to wait between Solr readiness poll attempts.
+const SOLR_READINESS_POLL_INTERVAL: Duration = Duration::from_secs(1);
+/// Per-probe socket timeout for a single Solr readiness request.
+const SOLR_PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// The string form of the ACCESS_KEY passed in when launching Mimir.
 static ACCESS_KEY: OnceLock<Option<String>> = OnceLock::new();
@@ -83,8 +103,19 @@ fn main() {
         Err(err) => handle_error(err),
     }
 
+    // The portal-protected collection is searchable when it has a usable index: either a DEK was
+    // produced (encrypted build + valid ACCESS_KEY, so it was just decrypted) or the build is
+    // plaintext (it ships unencrypted and is always present).  When available, enable distributed
+    // search across both collections.
+    let protected_available = dek.is_some() || !is_encrypted();
+
     // launch solr (in the background)
-    start_solr();
+    start_solr(protected_available);
+
+    // Wait for Solr's cores to finish loading before starting httpd.  Solr's HTTP listener comes
+    // up well before its cores register, so without this gate the first user search races core
+    // startup and Apache proxies back Solr's "SolrCore is loading" HTTP 503.
+    wait_for_solr_ready(protected_available);
 
     // launch MCP server.
     #[cfg(feature = "mcp")]
@@ -188,23 +219,27 @@ fn decrypt_edek() -> Result<Dek, MelError> {
 
     debug_println!("MEL: Your DEK is {}", dek.as_hex());
 
-    // Decrypt solr data if the encrypted file exists
+    // The portal collection ships UNENCRYPTED (public content: CVEs, errata, docs) so it is
+    // searchable without an ACCESS_KEY.  Only the protected (subscription-only) collection is
+    // encrypted — it holds Red Hat Knowledge Base content (Solutions & Articles) and is decrypted
+    // here with the DEK derived from the ACCESS_KEY.  Distributed search across both collections is
+    // enabled later in start_solr, gated on whether a DEK was produced.
     if Path::new(ENCRYPTED_SOLR_INDEX_PATH).exists() {
-        debug_println!("decrypting solr data");
+        debug_println!("decrypting protected solr data");
 
         decrypt_solr(dek.as_hex(), iv().as_hex())
             .map_err(|_| MelError::SolrIndexDecryptionFailed)?;
 
-        debug_println!("solr index decrypted");
+        debug_println!("protected solr index decrypted");
 
-        debug_println!("unpacking solr index tar file");
+        debug_println!("unpacking protected solr index tar file");
 
         unpack_solr_tar_gz().map_err(|_e| MelError::SolrUnpackFailed)?;
 
-        debug_println!("solr index unpacked");
+        debug_println!("protected solr index unpacked");
 
         clean_up();
-    } else if Path::new(SOLR_PORTAL_PATH).exists() {
+    } else if Path::new(SOLR_PROTECTED_PATH).exists() {
         debug_println!("using previously unpacked solr index");
     } else {
         return Err(MelError::SolrIndexNotFound);
@@ -213,7 +248,7 @@ fn decrypt_edek() -> Result<Dek, MelError> {
     Ok(Dek(dek.as_hex().to_string()))
 }
 
-/// Attempt to decrypt the solr index.
+/// Attempt to decrypt the protected solr index.
 fn decrypt_solr(dek: &str, iv: &str) -> io::Result<()> {
     let status = Command::new("openssl")
         .args([
@@ -241,11 +276,11 @@ fn decrypt_solr(dek: &str, iv: &str) -> io::Result<()> {
     }
 }
 
-/// Extract the decrypted solr tarball.
+/// Extract the decrypted protected solr tarball into the protected collection directory.
 fn unpack_solr_tar_gz() -> io::Result<()> {
     let status = Command::new("tar")
         .args(["-xzv", "-f", DECRYPTED_SOLR_INDEX_PATH])
-        .current_dir(SOLR_PORTAL_PATH)
+        .current_dir(SOLR_PROTECTED_PATH)
         .status()?;
 
     if status.success() {
@@ -258,7 +293,7 @@ fn unpack_solr_tar_gz() -> io::Result<()> {
     }
 }
 
-/// clean up the solr encrypted index and the decrypted tarball
+/// clean up the protected solr encrypted index and decrypted tarball.
 fn clean_up() {
     let files_to_remove = [ENCRYPTED_SOLR_INDEX_PATH, DECRYPTED_SOLR_INDEX_PATH];
 
@@ -304,7 +339,7 @@ fn start_httpd(enc_input: Option<Dek>) -> Result<std::process::ExitStatus, MelEr
 /// Print a missing MAK warning with remediation instructions, and a slow countdown before
 /// continuing.
 fn missing_mak_slow_warn() {
-    eprintln!("Warning: Missing ACCESS_KEY; Please retrieve an ACCESS_KEY from https://access.redhat.com/offline/access and provide it in the ACCESS_KEY environment variable to enable Search, Solutions, and Articles.");
+    eprintln!("Warning: Missing ACCESS_KEY; Please retrieve an ACCESS_KEY from https://access.redhat.com/offline/access and provide it in the ACCESS_KEY environment variable to enable Solutions and Articles (Red Hat Knowledge Base content). CVEs, errata, product documentation, and search remain available without an access key.");
     eprint!("Launching Red Hat Offline Knowledge Portal (without ACCESS_KEY) in ");
 
     /// Number of seconds to delay launching Mimir if the image is encrypted and no ACCESS_KEY
@@ -319,14 +354,20 @@ fn missing_mak_slow_warn() {
 }
 
 /// Launch solr in the background.  Errors will not be returned but will be printed to stderr.
-fn start_solr() {
+///
+/// When `protected_available` is true, the encrypted `portal-protected` collection has been
+/// decrypted and unpacked, so Solr is told to search across both collections via the
+/// `MIMIR_SEARCH_SHARDS` env var (forwarded by `run-solr` as `-Dmimir.search.shards`).  When
+/// false, only the unencrypted `portal` collection is searched.
+fn start_solr(protected_available: bool) {
     // Start solr in the background
-    std::thread::spawn(|| {
-        match Command::new("run-solr")
-            .stdout(Stdio::inherit())
-            .stderr(Stdio::inherit())
-            .spawn()
-        {
+    std::thread::spawn(move || {
+        let mut cmd = Command::new("run-solr");
+        cmd.stdout(Stdio::inherit()).stderr(Stdio::inherit());
+        if protected_available {
+            cmd.env("MIMIR_SEARCH_SHARDS", MIMIR_SEARCH_SHARDS);
+        }
+        match cmd.spawn() {
             Ok(mut child) => {
                 if let Err(_e) = child.wait() {
                     eprintln!("{}", MelError::SolrProcessFailed);
@@ -337,6 +378,78 @@ fn start_solr() {
             }
         }
     });
+}
+
+/// Block until every Solr core that will be queried answers its ping handler, or until
+/// [`SOLR_READINESS_TIMEOUT`] elapses.
+///
+/// Solr's HTTP listener (started by `run-solr`) accepts connections well before its cores finish
+/// loading, and the encrypted `portal-protected` collection must additionally be decrypted and
+/// unpacked first.  Because the `portal` `/select` handler distributes across both cores, a search
+/// that arrives during that window receives an HTTP 503 ("SolrCore is loading") that Apache proxies
+/// straight through to the browser -- the first-search error seen in the access log.  Gating httpd
+/// startup on core readiness closes that race.
+///
+/// If the timeout elapses we return anyway and let httpd start: a degraded launch that self-heals
+/// on retry is preferable to never serving the site, matching MEL's limited-launch philosophy for
+/// other failure modes.
+fn wait_for_solr_ready(protected_available: bool) {
+    let mut cores: Vec<&str> = vec!["portal"];
+    if protected_available {
+        cores.push("portal-protected");
+    }
+
+    debug_println!("MEL: waiting for Solr cores to become ready: {cores:?}");
+
+    let deadline = Instant::now() + SOLR_READINESS_TIMEOUT;
+    while !cores.iter().all(|core| solr_core_ready(core)) {
+        if Instant::now() >= deadline {
+            eprintln!(
+                "Warning: Solr cores were not all ready after {}s; starting httpd anyway. The first search may need a retry.",
+                SOLR_READINESS_TIMEOUT.as_secs()
+            );
+            return;
+        }
+        std::thread::sleep(SOLR_READINESS_POLL_INTERVAL);
+    }
+
+    debug_println!("MEL: all Solr cores are ready");
+}
+
+/// Probe a single Solr core's ping handler over a raw TCP HTTP/1.0 request.
+///
+/// Returns `true` only when the core answers HTTP 200, which for the ping handler means the core is
+/// loaded and its searcher is registered.  A connection error, timeout, or non-200 status (e.g. the
+/// 503 returned while the core is still loading) yields `false`.  Implemented with `std::net` so MEL
+/// takes on no HTTP-client dependency and relies on no external binary (curl/wget may be absent from
+/// the image).  The ping handler is used rather than `/select` because it does not self-distribute
+/// across shards, so it reports the readiness of exactly this one core.
+fn solr_core_ready(core: &str) -> bool {
+    let Ok(mut stream) = TcpStream::connect(SOLR_ADDR) else {
+        return false;
+    };
+    let _ = stream.set_read_timeout(Some(SOLR_PROBE_TIMEOUT));
+    let _ = stream.set_write_timeout(Some(SOLR_PROBE_TIMEOUT));
+
+    let request = format!(
+        "GET /solr/{core}/admin/ping?wt=json HTTP/1.0\r\nHost: {SOLR_ADDR}\r\nConnection: close\r\n\r\n"
+    );
+    if stream.write_all(request.as_bytes()).is_err() {
+        return false;
+    }
+
+    // We only need the status line; read what the server sends and inspect the first line.
+    let mut response = Vec::new();
+    if stream.read_to_end(&mut response).is_err() {
+        return false;
+    }
+
+    // The status line looks like "HTTP/1.1 200 OK"; a ready core returns 200, a loading or
+    // unavailable core returns 503.
+    String::from_utf8_lossy(&response)
+        .lines()
+        .next()
+        .is_some_and(|status_line| status_line.contains(" 200 "))
 }
 
 /// credits ascii art
