@@ -499,6 +499,37 @@ pub struct SolrResponseBody {
     pub docs: Vec<SolrDoc>,
 }
 
+/// Normalizes a field that Solr may return as either a scalar string or an
+/// array of strings into `Option<Vec<String>>`. A scalar becomes a
+/// single-element vec; null, absent, or an empty result become `None`.
+///
+/// Coercion is deliberately lenient: because this is a passthrough field, an
+/// unexpected shape in a single document must not fail deserialization of the
+/// entire response. Non-string values (numbers, objects, bools) and null array
+/// elements are dropped rather than treated as errors.
+fn deserialize_string_or_vec<'de, D>(deserializer: D) -> Result<Option<Vec<String>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde_json::Value;
+
+    let value = Option::<Value>::deserialize(deserializer)?;
+    Ok(match value {
+        Some(Value::String(s)) => Some(vec![s]),
+        Some(Value::Array(items)) => {
+            let strings: Vec<String> = items
+                .into_iter()
+                .filter_map(|v| match v {
+                    Value::String(s) => Some(s),
+                    _ => None,
+                })
+                .collect();
+            (!strings.is_empty()).then_some(strings)
+        }
+        _ => None,
+    })
+}
+
 /// A single document returned by Solr. All fields are optional because Solr
 /// may omit any field depending on the document and collection schema.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
@@ -511,8 +542,12 @@ pub struct SolrDoc {
     pub content_type: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub product: Option<serde_json::Value>,
+    #[serde(
+        default,
+        deserialize_with = "deserialize_string_or_vec",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub product: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub product_version: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -730,5 +765,55 @@ mod tests {
             SolrFilter::from(Tool::CveGetRag),
             SolrFilter::PortalRag(Some(PortalRagFilter::ContentType("Cve_parent")))
         ));
+    }
+
+    fn parse_doc(product_json: &str) -> SolrDoc {
+        serde_json::from_str(&format!(r#"{{"product":{product_json}}}"#))
+            .expect("SolrDoc should deserialize")
+    }
+
+    #[test]
+    fn product_scalar_string_normalizes_to_single_element_vec() {
+        let doc = parse_doc(r#""OpenShift""#);
+        assert_eq!(doc.product, Some(vec![s("OpenShift")]));
+    }
+
+    #[test]
+    fn product_array_normalizes_to_vec() {
+        let doc = parse_doc(r#"["OpenShift","RHEL"]"#);
+        assert_eq!(doc.product, Some(vec![s("OpenShift"), s("RHEL")]));
+    }
+
+    #[test]
+    fn product_array_with_null_or_non_string_elements_keeps_strings() {
+        let doc = parse_doc(r#"["OpenShift",null,42]"#);
+        assert_eq!(doc.product, Some(vec![s("OpenShift")]));
+    }
+
+    #[test]
+    fn product_unexpected_scalar_shapes_become_none_without_failing() {
+        // An odd shape in one field must not abort the whole response.
+        assert_eq!(parse_doc("42").product, None);
+        assert_eq!(parse_doc("true").product, None);
+        assert_eq!(parse_doc(r#"{"nested":"obj"}"#).product, None);
+    }
+
+    #[test]
+    fn product_null_empty_and_absent_become_none() {
+        assert_eq!(parse_doc("null").product, None);
+        assert_eq!(parse_doc("[]").product, None);
+        let doc: SolrDoc = serde_json::from_str("{}").expect("SolrDoc should deserialize");
+        assert_eq!(doc.product, None);
+    }
+
+    #[test]
+    fn product_serializes_as_array_and_is_omitted_when_none() {
+        let doc = parse_doc(r#""OpenShift""#);
+        let json = serde_json::to_value(&doc).expect("SolrDoc should serialize");
+        assert_eq!(json["product"], serde_json::json!(["OpenShift"]));
+
+        let empty: SolrDoc = serde_json::from_str("{}").expect("SolrDoc should deserialize");
+        let json = serde_json::to_value(&empty).expect("SolrDoc should serialize");
+        assert!(json.get("product").is_none());
     }
 }
