@@ -4,6 +4,10 @@
 //! MiMCP - MCP server library for the Red Hat Offline Knowledge Portal (RHOKP).
 
 pub mod embed;
+pub mod packages;
+pub mod portal;
+pub mod records;
+pub mod search_input;
 pub mod solr;
 pub mod tools;
 
@@ -85,6 +89,10 @@ pub async fn mcp_router(config: MimcpConfig) -> Result<axum::Router> {
         // ("/mcp/errata", ToolSet::Errata),
         // ("/mcp/all", ToolSet::All),
         ("/mcp", ToolSet::Default),
+        // Offline reimplementation of the upstream Red Hat security MCP
+        // server's tool surface, so clients written against it can point here
+        // unchanged.
+        ("/mcp/security", ToolSet::Security),
     ];
 
     let mut router = axum::Router::new();
