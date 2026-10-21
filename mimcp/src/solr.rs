@@ -9,10 +9,18 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use url::Url;
 
+use crate::portal::{PortalQuery, PortalResponse};
 use crate::tools::Tool;
 
 /// Solr collection name used by RHOKP.
 const COLLECTION: &str = "portal-rag";
+
+/// Lexical Solr collection backing the CVE and errata security tools.
+///
+/// Those tools are exact-ID lookups and structured `filterQuery` searches over
+/// whole documents, which is what this index holds; [`COLLECTION`] holds the
+/// embedded chunks used by the hybrid `search` tool.
+const PORTAL_COLLECTION: &str = "portal";
 
 /// Comma-separated Solr field list returned by lexical search queries.
 const FIELD_LIST: &str = "\
@@ -99,6 +107,16 @@ impl From<Tool> for SolrFilter {
             Tool::DocsSearch => {
                 SolrFilter::PortalRag(Some(PortalRagFilter::ContentType("documentation_chunk")))
             }
+            // The security tools target the lexical Portal index and build
+            // their own per-call filters via `PortalQuery`, so this mapping
+            // contributes no extra `fq` for them.
+            Tool::SearchCves
+            | Tool::GetCveById
+            | Tool::ListCveAffectedProducts
+            | Tool::SearchAdvisories
+            | Tool::GetErrataById
+            | Tool::ListAdvisoriesByCve
+            | Tool::ListAdvisoryPackages => SolrFilter::Portal(None),
         }
     }
 }
@@ -174,6 +192,7 @@ pub struct SolrClient {
     select_url: Url,
     hybrid_url: Url,
     health_url: Url,
+    portal_select_url: Url,
 }
 
 impl SolrClient {
@@ -185,12 +204,14 @@ impl SolrClient {
         let select_url = solr_base.join(&format!("solr/{COLLECTION}/select"))?;
         let hybrid_url = solr_base.join(&format!("solr/{COLLECTION}/hybrid-search"))?;
         let health_url = solr_base.join(&format!("solr/{COLLECTION}/admin/ping"))?;
+        let portal_select_url = solr_base.join(&format!("solr/{PORTAL_COLLECTION}/select"))?;
 
         Ok(Arc::new(Self {
             http: Client::new(),
             select_url,
             hybrid_url,
             health_url,
+            portal_select_url,
         }))
     }
 
@@ -299,6 +320,42 @@ impl SolrClient {
         .await
     }
 
+    /// Runs a query against the lexical `portal` collection.
+    ///
+    /// Used by the CVE and errata security tools, which need whole documents
+    /// and structured filters rather than embedded chunks. Each of the query's
+    /// filters is sent as its own `fq` entry, so Solr ANDs them and a malformed
+    /// client clause cannot escape the mandatory `documentKind` restriction.
+    ///
+    /// Returns `Err` if the HTTP request fails, the server responds with a
+    /// non-2xx status code, or the response body cannot be deserialized.
+    pub async fn portal_query(&self, query: &PortalQuery) -> Result<PortalResponse> {
+        let payload = SolrPayload {
+            params: SolrParams::portal(query),
+        };
+
+        let url = append_wt_json(self.portal_select_url.clone());
+
+        again::retry(|| {
+            let payload = &payload;
+            let url = url.clone();
+            async move {
+                self.http
+                    .post(url)
+                    .json(payload)
+                    .send()
+                    .await
+                    .map_err(anyhow::Error::from)?
+                    .error_for_status()
+                    .map_err(anyhow::Error::from)?
+                    .json::<PortalResponse>()
+                    .await
+                    .map_err(anyhow::Error::from)
+            }
+        })
+        .await
+    }
+
     /// Fetches a parent document by ID from Solr.
     ///
     /// Uses a wildcard suffix on `doc_id` so callers can pass either the
@@ -373,6 +430,10 @@ struct SolrParams {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     fq: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    start: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sort: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     rq: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     rqq: Option<String>,
@@ -390,6 +451,8 @@ impl SolrParams {
             rows: rows.to_string(),
             fl: FIELD_LIST.to_owned(),
             fq,
+            start: None,
+            sort: None,
             rq: None,
             rqq: None,
         }
@@ -405,6 +468,8 @@ impl SolrParams {
             rows: rows.to_string(),
             fl: HYBRID_FIELD_LIST.to_owned(),
             fq,
+            start: None,
+            sort: None,
             rq: Some(
                 "{!rerank reRankQuery=$rqq reRankDocs=10000 reRankWeight=2 reRankOperator=multiply}"
                     .to_owned(),
@@ -424,6 +489,27 @@ impl SolrParams {
             rows: "1".to_owned(),
             fl: FIELD_LIST.to_owned(),
             fq: vec![filter_fq.to_owned()],
+            start: None,
+            sort: None,
+            rq: None,
+            rqq: None,
+        }
+    }
+
+    /// Constructs parameters for a query against the lexical `portal`
+    /// collection.
+    ///
+    /// `start` and `sort` are only emitted when they differ from Solr's
+    /// defaults, keeping the request identical to the pre-existing shape for
+    /// simple lookups.
+    fn portal(query: &PortalQuery) -> Self {
+        Self {
+            q: query.query.clone(),
+            rows: query.rows.to_string(),
+            fl: query.fields.to_owned(),
+            fq: query.filters.clone(),
+            start: (query.start > 0).then(|| query.start.to_string()),
+            sort: query.sort.clone(),
             rq: None,
             rqq: None,
         }
@@ -437,7 +523,7 @@ impl SolrParams {
 /// preventing a value from breaking out of its `fq` clause. Within a quoted
 /// phrase only the backslash and the double quote are special, so those two
 /// characters are backslash-escaped.
-fn quote_solr_value(s: &str) -> String {
+pub(crate) fn quote_solr_value(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 2);
     out.push('"');
     for c in s.chars() {
