@@ -490,6 +490,32 @@ mod tests {
         assert!(normalize_advisory_id("CVE-2024-1234").is_err());
     }
 
+    /// Upstream's own tests assert on substrings of these rejection messages,
+    /// so clients and test suites written against that server match on them.
+    /// Changing the wording here is a compatibility break, not a copy edit.
+    #[test]
+    fn rejection_messages_keep_the_substrings_clients_match_on() {
+        assert!(
+            normalize_cve_id("not-a-cve")
+                .unwrap_err()
+                .contains("CVE-YYYY-NNNN"),
+            "upstream matches on \"CVE-YYYY-NNNN\""
+        );
+        assert!(
+            normalize_advisory_id("RHSA-2024")
+                .unwrap_err()
+                .contains("RHSA/RHEA/RHBA"),
+            "upstream matches on \"RHSA/RHEA/RHBA\""
+        );
+
+        let raw: RawSearchInput = serde_json::from_value(serde_json::json!("{\"query\":\"rhel}"))
+            .expect("a string input should deserialize");
+        assert!(
+            raw.resolve().unwrap_err().contains("valid JSON"),
+            "upstream matches on \"valid JSON\""
+        );
+    }
+
     #[test]
     fn year_conversion_is_exact_at_boundaries() {
         // 2024-01-01 and 2023-12-31 are adjacent days either side of a year end.

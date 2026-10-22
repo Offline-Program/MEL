@@ -999,6 +999,30 @@ mod tests {
         assert_eq!(names, expected);
     }
 
+    /// Upstream declares an `outputSchema` on every security tool so clients
+    /// can parse structured responses; a tool here that advertises none would
+    /// silently downgrade those clients to unstructured text.
+    #[test]
+    fn security_tools_advertise_an_output_schema() {
+        let registered = MimcpServer::tool_router().list_all();
+        for &tool in ToolSet::Security.allowed_tools() {
+            let registered = registered
+                .iter()
+                .find(|t| t.name == tool.name())
+                .unwrap_or_else(|| panic!("{} should be registered", tool.name()));
+            let schema = registered
+                .output_schema
+                .as_ref()
+                .unwrap_or_else(|| panic!("{} must advertise an output schema", tool.name()));
+            assert_eq!(
+                schema.get("type").and_then(|t| t.as_str()),
+                Some("object"),
+                "{} output schema must be an object",
+                tool.name()
+            );
+        }
+    }
+
     /// `get_cve_by_id` must apply upstream's affected-product paging defaults
     /// when a client sends only the identifier.
     #[test]
