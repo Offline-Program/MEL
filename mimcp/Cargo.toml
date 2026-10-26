@@ -7,7 +7,11 @@ license = "GPL-3.0-only"
 publish = false
 
 [features]
+# Integration tests that query a live Solr instance (tests/solr_integration.rs).
 real-solr = []
+# Integration tests that drive a running MCP server over HTTP
+# (tests/mcp_tools_integration.rs).
+live-mcp = []
 
 [dependencies]
 rmcp = { version = "2.2", features = ["server", "macros", "transport-streamable-http-server"] }
@@ -24,3 +28,11 @@ tokio-util = "0.7"
 tract-onnx = "0.23"
 tokenizers = { version = "0.23", default-features = false, features = ["onig"] }
 again = "0.1"
+
+[dev-dependencies]
+# The crate builds the server half of rmcp; the MCP integration tests speak to
+# a running server, so the test target additionally needs the client half.
+rmcp = { version = "2.2", features = [
+    "client",
+    "transport-streamable-http-client-reqwest",
+] }

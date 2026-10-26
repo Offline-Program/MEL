@@ -38,10 +38,10 @@ pub struct MimcpConfig {
 
 /// Builds an axum `Router` with the MCP service mounted.
 ///
-/// Only the default `/mcp` endpoint is mounted today; it exposes the hybrid
-/// `search` tool ([`ToolSet::Default`]). Content-type-scoped endpoints
-/// (`/mcp/cves`, `/mcp/docs`, `/mcp/errata`, `/mcp/all`) are proof-of-concept
-/// and remain commented out below until coordination with Lightforge evolves.
+/// Two endpoints are mounted: `/mcp`, exposing the hybrid `search` tool
+/// ([`ToolSet::Default`]), and `/mcp/security`, exposing the offline
+/// reimplementation of the online Red Hat security MCP server's seven tools
+/// ([`ToolSet::Security`]).
 ///
 /// Returns `Err` if the Solr endpoint URLs cannot be constructed, the Solr
 /// health check fails, or the embedding model cannot be loaded.
@@ -83,11 +83,6 @@ pub async fn mcp_router(config: MimcpConfig) -> Result<axum::Router> {
     };
 
     let routes: &[(&str, ToolSet)] = &[
-        // Disabling the other routes so we can focus on the default hybrid search toolset first.  Re-enable the others as our coordination with Lightforge evolves.
-        // ("/mcp/cves", ToolSet::Cves),
-        // ("/mcp/docs", ToolSet::Docs),
-        // ("/mcp/errata", ToolSet::Errata),
-        // ("/mcp/all", ToolSet::All),
         ("/mcp", ToolSet::Default),
         // Offline reimplementation of the upstream Red Hat security MCP
         // server's tool surface, so clients written against it can point here
