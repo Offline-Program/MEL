@@ -93,20 +93,6 @@ impl From<Tool> for SolrFilter {
             // Broad hybrid search: no extra fq, relies on the mandatory
             // `is_chunk:true` base filter of the PortalRag index.
             Tool::Search => SolrFilter::PortalRag(None),
-            // CVE search, one version per index.
-            Tool::CveSearchPortal => SolrFilter::Portal(Some(PortalFilter::DocumentKind("Cve"))),
-            Tool::CveSearchRag => {
-                SolrFilter::PortalRag(Some(PortalRagFilter::ContentType("Cve_chunk")))
-            }
-            // CVE lookup by ID, one version per index.
-            Tool::CveGetPortal => SolrFilter::Portal(Some(PortalFilter::DocumentKind("Cve"))),
-            Tool::CveGetRag => {
-                SolrFilter::PortalRag(Some(PortalRagFilter::ContentType("Cve_parent")))
-            }
-            // Documentation search.
-            Tool::DocsSearch => {
-                SolrFilter::PortalRag(Some(PortalRagFilter::ContentType("documentation_chunk")))
-            }
             // The security tools target the lexical Portal index and build
             // their own per-call filters via `PortalQuery`, so this mapping
             // contributes no extra `fq` for them.
@@ -835,22 +821,27 @@ mod tests {
 
     #[test]
     fn tool_maps_to_expected_index_and_filter() {
+        // The hybrid search is the only tool that targets the RAG index.
         assert!(matches!(
             SolrFilter::from(Tool::Search),
             SolrFilter::PortalRag(None)
         ));
-        assert!(matches!(
-            SolrFilter::from(Tool::CveSearchPortal),
-            SolrFilter::Portal(Some(PortalFilter::DocumentKind("Cve")))
-        ));
-        assert!(matches!(
-            SolrFilter::from(Tool::CveSearchRag),
-            SolrFilter::PortalRag(Some(PortalRagFilter::ContentType("Cve_chunk")))
-        ));
-        assert!(matches!(
-            SolrFilter::from(Tool::CveGetRag),
-            SolrFilter::PortalRag(Some(PortalRagFilter::ContentType("Cve_parent")))
-        ));
+        // Every security tool targets the lexical Portal index and builds its
+        // own per-call filter through PortalQuery, so this mapping adds no fq.
+        for tool in [
+            Tool::SearchCves,
+            Tool::GetCveById,
+            Tool::ListCveAffectedProducts,
+            Tool::SearchAdvisories,
+            Tool::GetErrataById,
+            Tool::ListAdvisoriesByCve,
+            Tool::ListAdvisoryPackages,
+        ] {
+            assert!(
+                matches!(SolrFilter::from(tool), SolrFilter::Portal(None)),
+                "{tool:?} should map to the lexical Portal index with no extra fq"
+            );
+        }
     }
 
     fn parse_doc(product_json: &str) -> SolrDoc {

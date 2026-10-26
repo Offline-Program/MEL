@@ -61,22 +61,14 @@ macro_rules! define_tools {
     };
 }
 
+// The tool surface is deliberately closed. Only two things belong here: the
+// hybrid `search` tool, which is ours alone, and offline reimplementations of
+// tools the online Red Hat MCP servers expose - the security server today, the
+// product lifecycle server when its tools are ported. A tool with no
+// counterpart in one of those servers does not belong in this enum.
 define_tools! {
-    // Lexical keyword search. Commented out until the lexical Portal index is
-    // wired up; re-enable alongside a `search_lexical` router method.
-    // SearchLexical => "search_lexical",
-    /// Hybrid (keyword + semantic) search.
+    /// Hybrid (keyword + semantic) search. No upstream counterpart.
     Search => "search",
-    /// CVE search against the lexical Portal index.
-    CveSearchPortal => "cve_search_portal",
-    /// CVE search against the PortalRag index.
-    CveSearchRag => "cve_search_rag",
-    /// Documentation hybrid search.
-    DocsSearch => "docs_search",
-    /// CVE lookup by ID against the lexical Portal index.
-    CveGetPortal => "cve_get_portal",
-    /// CVE lookup by ID against the PortalRag index.
-    CveGetRag => "cve_get_rag",
 
     // Security tools: offline reimplementations of the upstream Red Hat
     // security MCP server's surface, backed by the lexical `portal`
@@ -110,17 +102,6 @@ impl Tool {
 /// Returns the default value for the `rows` field on search requests.
 fn default_rows() -> u32 {
     5
-}
-
-/// Parameters for the `search_lexical` MCP tool.
-#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct LexicalSearchRequest {
-    #[schemars(description = "Search query for Red Hat documentation, errata, CVEs, etc.")]
-    pub query: String,
-
-    #[schemars(description = "Maximum number of results to return (1-20, default 5)")]
-    #[serde(default = "default_rows")]
-    pub rows: u32,
 }
 
 /// A single product restriction for the structured search filter: a product
@@ -161,24 +142,6 @@ pub struct HybridSearchRequest {
     )]
     #[serde(default)]
     pub products: Vec<ProductFilter>,
-}
-
-/// Parameters for content-type-specific search tools.
-#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct ContentSearchRequest {
-    #[schemars(description = "Search query")]
-    pub query: String,
-
-    #[schemars(description = "Maximum number of results to return (1-20, default 5)")]
-    #[serde(default = "default_rows")]
-    pub rows: u32,
-}
-
-/// Parameters for document lookup by ID.
-#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct GetByIdRequest {
-    #[schemars(description = "Document identifier (e.g. CVE-2024-1234, RHSA-2024:1234)")]
-    pub id: String,
 }
 
 /// Upper bound on advisories returned for a single CVE by
@@ -266,18 +229,19 @@ pub struct ListAdvisoryPackagesRequest {
 }
 
 /// Defines which tools an endpoint exposes via `list_tools`.
+///
+/// Variants mirror the Lightforge MCP servers, one per server, so an endpoint
+/// here stands in for the online server a client would otherwise point at.
+/// They are not content-type groupings: slicing the surface by `Cve` / `Docs`
+/// / `Errata` produced endpoints with no online counterpart, and was removed.
+/// Porting the product lifecycle server's tools means adding a `Product`
+/// variant, not a thematic one.
 #[derive(Clone)]
 pub enum ToolSet {
     /// Hybrid search only, by default.  This default may change in the future.
     Default,
     /// All tools.
     All,
-    /// CVE tools only.
-    Cves,
-    /// Documentation tools only.
-    Docs,
-    /// Errata (advisory) tools only.
-    Errata,
     /// The upstream-parity Red Hat security tool surface: CVEs and advisories.
     Security,
 }
@@ -288,31 +252,9 @@ impl ToolSet {
             Self::Default => &[Tool::Search],
             Self::All => &[
                 Tool::Search,
-                Tool::CveSearchPortal,
-                Tool::CveSearchRag,
-                Tool::DocsSearch,
-                Tool::CveGetPortal,
-                Tool::CveGetRag,
                 Tool::SearchCves,
                 Tool::GetCveById,
                 Tool::ListCveAffectedProducts,
-                Tool::SearchAdvisories,
-                Tool::GetErrataById,
-                Tool::ListAdvisoriesByCve,
-                Tool::ListAdvisoryPackages,
-            ],
-            Self::Cves => &[
-                Tool::CveSearchPortal,
-                Tool::CveSearchRag,
-                Tool::CveGetPortal,
-                Tool::CveGetRag,
-                Tool::SearchCves,
-                Tool::GetCveById,
-                Tool::ListCveAffectedProducts,
-                Tool::ListAdvisoriesByCve,
-            ],
-            Self::Docs => &[Tool::DocsSearch],
-            Self::Errata => &[
                 Tool::SearchAdvisories,
                 Tool::GetErrataById,
                 Tool::ListAdvisoriesByCve,
@@ -341,15 +283,6 @@ impl ToolSet {
                 "RHOKP MCP provides search access to Red Hat product documentation, \
                  errata, and CVEs from the Offline Knowledge Portal."
                     .to_owned()
-            }
-            Self::Cves => {
-                "RHOKP MCP CVE endpoint. Search and retrieve Red Hat CVE records.".to_owned()
-            }
-            Self::Docs => {
-                "RHOKP MCP documentation endpoint. Search Red Hat product documentation.".to_owned()
-            }
-            Self::Errata => {
-                "RHOKP MCP errata endpoint. Search and retrieve Red Hat advisories.".to_owned()
             }
             Self::Security => "RHOKP MCP security endpoint. Offline search and retrieval of Red \
                  Hat CVE records and security advisories."
@@ -436,30 +369,6 @@ impl MimcpServer {
         Ok(Json(result))
     }
 
-    /// Fetches a document by ID for `tool`, using the parent-variant filter for
-    /// the tool's target index.
-    ///
-    /// Returns `Err` if the tool has no lookup filter or the Solr query fails.
-    async fn run_get(&self, tool: Tool, id: &str) -> Result<Json<SolrResponse>, ErrorData> {
-        let filter_fq = match SolrFilter::from(tool) {
-            SolrFilter::Portal(Some(filter)) => filter.to_fq(),
-            SolrFilter::PortalRag(Some(filter)) => filter.to_fq(),
-            SolrFilter::Portal(None) | SolrFilter::PortalRag(None) => {
-                return Err(ErrorData::internal_error(
-                    format!("tool {} has no lookup filter", tool.name()),
-                    None,
-                ));
-            }
-        };
-
-        let result = self.solr.get_by_id(id, &filter_fq).await.map_err(|e| {
-            tracing::error!(error = %e, id, tool = tool.name(), "solr get_by_id failed");
-            ErrorData::internal_error(format!("Solr query failed: {e}"), None)
-        })?;
-
-        Ok(Json(result))
-    }
-
     /// Runs a query against the lexical `portal` collection.
     ///
     /// Returns `Err` if the Solr query fails.
@@ -542,18 +451,6 @@ impl MimcpServer {
 
 #[tool_router]
 impl MimcpServer {
-    // Lexical keyword search. Commented out until the lexical Portal index is
-    // wired up; re-enable alongside the `SearchLexical` `Tool` variant.
-    // #[tool(
-    //     description = "Lexical keyword search across Red Hat product documentation, errata, CVEs, and knowledge base articles. Use search for better relevance."
-    // )]
-    // async fn search_lexical(
-    //     &self,
-    //     Parameters(req): Parameters<LexicalSearchRequest>,
-    // ) -> Result<Json<SolrResponse>, ErrorData> {
-    //     self.run_search(Tool::SearchLexical, &req.query, req.rows).await
-    // }
-
     #[tool(
         description = "Hybrid search combining keyword matching with semantic relevance reranking. Produces more relevant results than plain lexical search. Use this for natural language questions about Red Hat products, CVEs, errata, and documentation."
     )]
@@ -563,57 +460,6 @@ impl MimcpServer {
     ) -> Result<Json<SolrResponse>, ErrorData> {
         self.run_search(Tool::Search, &req.query, req.rows, &req.products)
             .await
-    }
-
-    #[tool(description = "Search Red Hat CVE records against the lexical Portal index.")]
-    async fn cve_search_portal(
-        &self,
-        Parameters(req): Parameters<LexicalSearchRequest>,
-    ) -> Result<Json<SolrResponse>, ErrorData> {
-        self.run_search(Tool::CveSearchPortal, &req.query, req.rows, &[])
-            .await
-    }
-
-    #[tool(description = "Search Red Hat CVE records using hybrid semantic and keyword matching.")]
-    async fn cve_search_rag(
-        &self,
-        Parameters(req): Parameters<HybridSearchRequest>,
-    ) -> Result<Json<SolrResponse>, ErrorData> {
-        self.run_search(Tool::CveSearchRag, &req.query, req.rows, &req.products)
-            .await
-    }
-
-    #[tool(
-        description = "Search Red Hat product documentation using hybrid semantic and keyword matching."
-    )]
-    async fn docs_search(
-        &self,
-        Parameters(req): Parameters<ContentSearchRequest>,
-    ) -> Result<Json<SolrResponse>, ErrorData> {
-        self.run_search(Tool::DocsSearch, &req.query, req.rows, &[])
-            .await
-    }
-
-    /// Returns `Err` if the Solr query fails.
-    #[tool(
-        description = "Fetch a specific CVE by its identifier (e.g. CVE-2024-1234) from the lexical Portal index."
-    )]
-    async fn cve_get_portal(
-        &self,
-        Parameters(req): Parameters<GetByIdRequest>,
-    ) -> Result<Json<SolrResponse>, ErrorData> {
-        self.run_get(Tool::CveGetPortal, &req.id).await
-    }
-
-    /// Returns `Err` if the Solr query fails.
-    #[tool(
-        description = "Fetch a specific CVE by its identifier (e.g. CVE-2024-1234) from the PortalRag index."
-    )]
-    async fn cve_get_rag(
-        &self,
-        Parameters(req): Parameters<GetByIdRequest>,
-    ) -> Result<Json<SolrResponse>, ErrorData> {
-        self.run_get(Tool::CveGetRag, &req.id).await
     }
 
     #[tool(
@@ -871,26 +717,6 @@ impl MimcpServer {
             req.offset,
         )))
     }
-
-    // Errata tools disabled for now; re-enable alongside the errata `Tool`
-    // variants.
-    // #[tool(
-    //     description = "Search Red Hat errata advisories using hybrid semantic and keyword matching."
-    // )]
-    // async fn errata_search(
-    //     &self,
-    //     Parameters(req): Parameters<ContentSearchRequest>,
-    // ) -> Result<Json<SolrResponse>, ErrorData> {
-    //     self.run_search(Tool::ErrataSearch, &req.query, req.rows).await
-    // }
-
-    // #[tool(description = "Fetch a specific erratum by its advisory ID (e.g. RHSA-2024:1234).")]
-    // async fn errata_get(
-    //     &self,
-    //     Parameters(req): Parameters<GetByIdRequest>,
-    // ) -> Result<Json<SolrResponse>, ErrorData> {
-    //     self.run_get(Tool::ErrataGet, &req.id).await
-    // }
 }
 
 #[cfg(test)]
@@ -947,18 +773,13 @@ mod tests {
         }
     }
 
-    /// Prevents a per-content-type ToolSet variant from advertising a
-    /// tool that ToolSet::All doesn't include - which would mean the
-    /// scoped endpoint exposes something the "everything" endpoint hides.
+    /// Prevents a scoped ToolSet variant from advertising a tool that
+    /// ToolSet::All doesn't include - which would mean the scoped endpoint
+    /// exposes something the "everything" endpoint hides.
     #[test]
     fn toolset_subsets_are_subsets_of_all() {
         let all: HashSet<Tool> = ToolSet::All.allowed_tools().iter().copied().collect();
-        for variant in [
-            ToolSet::Cves,
-            ToolSet::Docs,
-            ToolSet::Errata,
-            ToolSet::Security,
-        ] {
+        for variant in [ToolSet::Default, ToolSet::Security] {
             for &tool in variant.allowed_tools() {
                 assert!(
                     all.contains(&tool),
@@ -973,7 +794,34 @@ mod tests {
     fn default_toolset_is_hybrid_search() {
         assert_eq!(ToolSet::Default.allowed_tools(), &[Tool::Search]);
         assert_eq!(Tool::Search.name(), "search");
-        assert!(!ToolSet::Default.allows(Tool::CveSearchRag));
+        assert!(!ToolSet::Default.allows(Tool::SearchCves));
+    }
+
+    /// The tool surface is closed: the hybrid `search` tool plus offline
+    /// reimplementations of the online Red Hat MCP servers' tools, and nothing
+    /// else. A tool added here without a counterpart in one of those servers
+    /// should fail this test rather than reach a client.
+    #[test]
+    fn no_tool_exists_outside_the_agreed_surface() {
+        let agreed: HashSet<&str> = HashSet::from([
+            // Ours alone: hybrid search over the RAG index.
+            "search",
+            // Online security MCP server (app/tools/tools.py).
+            "search_cves",
+            "get_cve_by_id",
+            "list_cve_affected_products",
+            "search_advisories",
+            "get_errata_by_id",
+            "list_advisories_by_cve",
+            "list_advisory_packages",
+        ]);
+        for &tool in Tool::ALL {
+            assert!(
+                agreed.contains(tool.name()),
+                "Tool::{tool:?} ({:?}) has no counterpart in the online MCP servers",
+                tool.name()
+            );
+        }
     }
 
     /// The security endpoint must expose exactly the upstream Red Hat security
