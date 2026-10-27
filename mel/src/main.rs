@@ -43,8 +43,7 @@ use std::{fs, process};
 
 /// The location of the encrypted solr index — the subscription-only `portal-protected` collection
 /// (the public `portal` collection ships unencrypted).
-const ENCRYPTED_SOLR_INDEX_PATH: &str =
-    "/opt/solr/server/solr/portal-protected/data.tar.gz.enc";
+const ENCRYPTED_SOLR_INDEX_PATH: &str = "/opt/solr/server/solr/portal-protected/data.tar.gz.enc";
 /// The location of the solr index after decryption.
 const DECRYPTED_SOLR_INDEX_PATH: &str = "/opt/solr/server/solr/portal-protected/data.tar.gz";
 /// The path to the protected solr collection directory.
@@ -53,8 +52,7 @@ const SOLR_PROTECTED_PATH: &str = "/opt/solr/server/solr/portal-protected";
 /// `portal` collection and the subscription-only `portal-protected` collection, so that search
 /// federates across public and protected content transparently.  Exported to the environment for
 /// `run-solr`, which forwards it as the `mimir.search.shards` JVM system property.
-const MIMIR_SEARCH_SHARDS: &str =
-    "localhost:8983/solr/portal,localhost:8983/solr/portal-protected";
+const MIMIR_SEARCH_SHARDS: &str = "localhost:8983/solr/portal,localhost:8983/solr/portal-protected";
 /// The path inside the final image to the tokens tsv file.  This file is created by MOE and copied
 /// into the image in Containerfile.main.
 const TOKENS_TSV_PATH: &str = "/opt/tokens";
@@ -339,7 +337,7 @@ fn start_httpd(enc_input: Option<Dek>) -> Result<std::process::ExitStatus, MelEr
 /// Print a missing MAK warning with remediation instructions, and a slow countdown before
 /// continuing.
 fn missing_mak_slow_warn() {
-    eprintln!("Warning: Missing ACCESS_KEY; Please retrieve an ACCESS_KEY from https://access.redhat.com/offline/access and provide it in the ACCESS_KEY environment variable to enable Solutions and Articles (Red Hat Knowledge Base content). CVEs, errata, product documentation, and search remain available without an access key.");
+    eprintln!("Warning: Missing ACCESS_KEY; Please retrieve an ACCESS_KEY from https://access.redhat.com/offline/access and provide it in the ACCESS_KEY environment variable to enable Solutions and Articles (Red Hat Knowledge Base content). Access to other content types, such as CVEs, errata, product documentation, and search remain available without an access key.");
     eprint!("Launching Red Hat Offline Knowledge Portal (without ACCESS_KEY) in ");
 
     /// Number of seconds to delay launching Mimir if the image is encrypted and no ACCESS_KEY
