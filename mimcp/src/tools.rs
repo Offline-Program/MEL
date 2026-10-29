@@ -755,41 +755,55 @@ mod tests {
         }
     }
 
-    /// Catches a new [`Tool`] variant being added without including it in
-    /// ToolSet::All, which would make the tool unreachable from /mcp/all.
+    /// Catches a new [`Tool`] variant being added without including it in the
+    /// default tool set, which would make the tool unreachable from the
+    /// default endpoint.
     #[test]
-    fn all_toolset_covers_every_enabled_tool() {
-        let allowed: HashSet<Tool> = ToolSet::All.allowed_tools().iter().copied().collect();
+    fn default_toolset_covers_every_enabled_tool() {
+        let allowed: HashSet<Tool> = ToolSet::Default.allowed_tools().iter().copied().collect();
         for &tool in Tool::ALL {
             assert!(
                 allowed.contains(&tool),
-                "Tool::{tool:?} missing from ToolSet::All"
+                "Tool::{tool:?} missing from ToolSet::Default"
             );
         }
     }
 
-    /// Prevents a scoped ToolSet variant from advertising a tool that
-    /// ToolSet::All doesn't include - which would mean the scoped endpoint
+    /// Prevents a scoped ToolSet variant from advertising a tool that the
+    /// default tool set doesn't include - which would mean the scoped endpoint
     /// exposes something the "everything" endpoint hides.
     #[test]
-    fn toolset_subsets_are_subsets_of_all() {
-        let all: HashSet<Tool> = ToolSet::All.allowed_tools().iter().copied().collect();
+    fn toolset_subsets_are_subsets_of_default() {
+        let all: HashSet<Tool> = ToolSet::Default.allowed_tools().iter().copied().collect();
         for variant in [ToolSet::Default, ToolSet::Security] {
             for &tool in variant.allowed_tools() {
                 assert!(
                     all.contains(&tool),
-                    "{tool:?} in a ToolSet variant but not in ToolSet::All"
+                    "{tool:?} in a ToolSet variant but not in ToolSet::Default"
                 );
             }
         }
     }
 
-    /// The default endpoint must expose only the hybrid `search` tool.
+    /// The default endpoint exposes every tool: the hybrid `search` tool plus
+    /// the offline security tool surface.
     #[test]
-    fn default_toolset_is_hybrid_search() {
-        assert_eq!(ToolSet::Default.allowed_tools(), &[Tool::Search]);
+    fn default_toolset_exposes_every_tool() {
+        assert_eq!(
+            ToolSet::Default.allowed_tools(),
+            &[
+                Tool::Search,
+                Tool::SearchCves,
+                Tool::GetCveById,
+                Tool::ListCveAffectedProducts,
+                Tool::SearchAdvisories,
+                Tool::GetErrataById,
+                Tool::ListAdvisoriesByCve,
+                Tool::ListAdvisoryPackages,
+            ]
+        );
         assert_eq!(Tool::Search.name(), "search");
-        assert!(!ToolSet::Default.allows(Tool::SearchCves));
+        assert!(ToolSet::Default.allows(Tool::SearchCves));
     }
 
     /// The tool surface is closed: the hybrid `search` tool plus offline
