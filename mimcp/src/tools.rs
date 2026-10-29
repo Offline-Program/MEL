@@ -472,7 +472,10 @@ impl MimcpServer {
                        no keyword:\n\
                        - Severity: `cve_threatSeverity:<value>` - Critical, Important, \
                        Moderate, Low.\n\
-                       - Date: `cve_publicDate:([<start>T00:00:00.000Z TO <end>T23:59:59.000Z])`\n\n\
+                       - Date: `cve_publicDate:([<start>T00:00:00.000Z TO <end>T23:59:59.000Z])`\n\
+                       - CVSS: `(cvss3_base_score:[<min> TO *] OR (-cvss3_base_score:[* TO *] \
+                       AND cvss_base_score:[<min> TO *]))` - v3 base score with v2 fallback, \
+                       e.g. 7.0 for high-severity triage.\n\n\
                        Sort only when needed via `sort.sortOrder` (`<field> asc|desc`): \
                        cve_publicDate, lastModifiedDate, or cve_threatSeverity. Do not invent \
                        extra filterQuery fields or sort options.\n\n\
