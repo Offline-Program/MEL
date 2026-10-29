@@ -20,7 +20,8 @@ pub const KIND_ERRATA: &str = "Errata";
 /// Fields returned for CVE search hits (`search_cves`).
 pub const CVE_SUMMARY_FL: &str = "\
     url_slug,cve_details,cve_threatSeverity,cve_affected_products,\
-    cve_publicDate,cve_updated_date,lastModifiedDate";
+    cve_publicDate,cve_updated_date,lastModifiedDate,\
+    cvss3_redhat_score,cvss2_redhat_score";
 
 /// Fields returned for a full CVE record (`get_cve_by_id`,
 /// `list_cve_affected_products`).
@@ -424,5 +425,18 @@ mod tests {
                 "portal_severity:Critical".to_owned()
             ]
         );
+    }
+
+    /// `search_cves` maps `cvss3_base_score`/`cvss2_base_score` off
+    /// `cvss3_redhat_score`/`cvss2_redhat_score`; if the summary field list
+    /// stops requesting those from Solr the scores silently degrade to null.
+    #[test]
+    fn cve_summary_fl_requests_cvss_scores() {
+        for field in ["cvss3_redhat_score", "cvss2_redhat_score"] {
+            assert!(
+                CVE_SUMMARY_FL.split(',').any(|f| f == field),
+                "CVE_SUMMARY_FL must request {field} for search_cves CVSS base scores"
+            );
+        }
     }
 }
