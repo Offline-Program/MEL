@@ -240,8 +240,6 @@ pub struct ListAdvisoryPackagesRequest {
 pub enum ToolSet {
     /// Hybrid search only, by default.  This default may change in the future.
     Default,
-    /// All tools.
-    All,
     /// The upstream-parity Red Hat security tool surface: CVEs and advisories.
     Security,
 }
@@ -249,8 +247,7 @@ pub enum ToolSet {
 impl ToolSet {
     pub fn allowed_tools(&self) -> &'static [Tool] {
         match self {
-            Self::Default => &[Tool::Search],
-            Self::All => &[
+            Self::Default => &[
                 Tool::Search,
                 Tool::SearchCves,
                 Tool::GetCveById,
@@ -279,11 +276,9 @@ impl ToolSet {
 
     fn instructions(&self) -> String {
         match self {
-            Self::Default | Self::All => {
-                "RHOKP MCP provides search access to Red Hat product documentation, \
+            Self::Default => "RHOKP MCP provides search access to Red Hat product documentation, \
                  errata, and CVEs from the Offline Knowledge Portal."
-                    .to_owned()
-            }
+                .to_owned(),
             Self::Security => "RHOKP MCP security endpoint. Offline search and retrieval of Red \
                  Hat CVE records and security advisories."
                 .to_owned(),
