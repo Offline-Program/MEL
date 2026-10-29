@@ -478,7 +478,8 @@ impl MimcpServer {
                        extra filterQuery fields or sort options.\n\n\
                        Returns: `metadata.total` and `metadata.start` plus summary rows - CVE \
                        ID, short description, threat severity, affected products (product_name, \
-                       package, state), and public and last-modified dates. A total of 0 with \
+                       package, state), public and last-modified dates, and Red Hat CVSS v3/v2 \
+                       base scores (null when unscored). A total of 0 with \
                        an empty results array means no matches, and is still a successful \
                        response."
     )]

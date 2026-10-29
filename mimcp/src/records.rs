@@ -124,6 +124,10 @@ pub struct CveSummary {
     pub public_date: Option<String>,
     /// Date the CVE record was last updated.
     pub updated_date: Option<String>,
+    /// CVSS v3 base score from Red Hat Product Security (0.0 - 10.0).
+    pub cvss3_base_score: Option<f64>,
+    /// CVSS v2 base score from Red Hat Product Security (0.0 - 10.0).
+    pub cvss2_base_score: Option<f64>,
 }
 
 impl From<PortalDoc> for CveSummary {
@@ -144,6 +148,8 @@ impl From<PortalDoc> for CveSummary {
             affected_products: (!products.is_empty()).then_some(products),
             public_date: doc.cve_public_date.clone(),
             updated_date: doc.cve_update_date(),
+            cvss3_base_score: doc.cvss3_redhat_score,
+            cvss2_base_score: doc.cvss2_redhat_score,
         }
     }
 }
@@ -657,6 +663,34 @@ mod tests {
         assert!(json["bugzilla"].is_null());
         // The key must still be present, as an empty list, so clients can page.
         assert_eq!(json["affected_products"], serde_json::json!([]));
+    }
+
+    #[test]
+    fn cve_summary_maps_upstream_fields() {
+        let summary = CveSummary::from(doc(serde_json::json!({
+            "url_slug": "CVE-2021-44228",
+            "cve_details": "A flaw was found in log4j.",
+            "cve_threatSeverity": "Critical",
+            "cve_publicDate": "2021-12-10T00:00:00Z",
+            "cve_updated_date": "2021-12-15T00:00:00Z",
+            "cvss3_redhat_score": 9.8,
+            "cvss2_redhat_score": 5.0,
+            "cve_affected_products": [
+                r#"{"product_name":"Red Hat Enterprise Linux 8","state":"Affected","package":"log4j"}"#,
+            ],
+        })));
+        let json = json_of(&summary);
+        assert_eq!(json["cve_id"], "CVE-2021-44228");
+        assert_eq!(json["severity"], "Critical");
+        assert_eq!(json["cvss3_base_score"], 9.8);
+        assert_eq!(json["cvss2_base_score"], 5.0);
+        assert_eq!(json["affected_products"][0]["package"], "log4j");
+
+        // Unscored doc emits null scores, not omitted keys.
+        let unscored = CveSummary::from(doc(serde_json::json!({ "url_slug": "CVE-2024-0001" })));
+        let json = json_of(&unscored);
+        assert!(json["cvss3_base_score"].is_null());
+        assert!(json["cvss2_base_score"].is_null());
     }
 
     #[test]
