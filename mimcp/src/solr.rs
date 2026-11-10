@@ -12,8 +12,8 @@ use url::Url;
 use crate::portal::{PortalQuery, PortalResponse};
 use crate::tools::Tool;
 
-/// Solr collection name used by RHOKP.
-const COLLECTION: &str = "portal-rag";
+/// Solr collection containing semantic embeddings.
+const PORTAL_RAG_COLLECTION: &str = "portal-rag";
 
 /// Lexical Solr collection backing the CVE and errata security tools.
 ///
@@ -187,9 +187,9 @@ impl SolrClient {
     /// Returns `Err` if any of the endpoint URLs cannot be constructed
     /// from `solr_base`.
     pub fn new(solr_base: Url) -> Result<Arc<Self>> {
-        let select_url = solr_base.join(&format!("solr/{COLLECTION}/select"))?;
-        let hybrid_url = solr_base.join(&format!("solr/{COLLECTION}/hybrid-search"))?;
-        let health_url = solr_base.join(&format!("solr/{COLLECTION}/admin/ping"))?;
+        let select_url = solr_base.join(&format!("solr/{PORTAL_RAG_COLLECTION}/select"))?;
+        let hybrid_url = solr_base.join(&format!("solr/{PORTAL_RAG_COLLECTION}/hybrid-search"))?;
+        let health_url = solr_base.join(&format!("solr/{PORTAL_RAG_COLLECTION}/admin/ping"))?;
         let portal_select_url = solr_base.join(&format!("solr/{PORTAL_COLLECTION}/select"))?;
 
         Ok(Arc::new(Self {
