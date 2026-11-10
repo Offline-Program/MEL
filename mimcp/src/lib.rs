@@ -3,12 +3,15 @@
 
 //! MiMCP - MCP server library for the Red Hat Offline Knowledge Portal (RHOKP).
 
+/// ONNX-backed text embedding support.
 pub mod embed;
 pub mod packages;
 pub mod portal;
 pub mod records;
 pub mod search_input;
+/// Client for querying the Solr indexes backing the RHOKP portal.
 pub mod solr;
+/// MCP tool definitions and the [`MimcpServer`] implementation.
 pub mod tools;
 
 use std::path::PathBuf;

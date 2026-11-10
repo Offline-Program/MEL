@@ -108,12 +108,14 @@ fn default_rows() -> u32 {
 /// and, optionally, the versions of that product to narrow results to.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct ProductFilter {
+    /// Product slug to match exactly, e.g. `"openshift_container_platform"`.
     #[schemars(
         description = "Product slug to match exactly, e.g. \"openshift_container_platform\". \
                        Matched exactly against the document's product field (no wildcards)."
     )]
     pub product: String,
 
+    /// Versions of this product to include; empty matches all versions.
     #[schemars(
         description = "Versions of this product to include, e.g. [\"4.19\", \"4.20\"]. \
                        Matched exactly against the document's product_version field and \
@@ -127,13 +129,16 @@ pub struct ProductFilter {
 /// Parameters for the `search` (hybrid) MCP tool.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct HybridSearchRequest {
+    /// The search query.
     #[schemars(description = "Search query for Red Hat documentation, errata, CVEs, etc.")]
     pub query: String,
 
+    /// Maximum number of results to return.
     #[schemars(description = "Maximum number of results to return (1-20, default 5)")]
     #[serde(default = "default_rows")]
     pub rows: u32,
 
+    /// Optional structured product filter restricting results to the listed products.
     #[schemars(
         description = "Optional structured product filter restricting results to the listed \
                        products (OR-combined). Each entry names a product and, optionally, the \
@@ -245,6 +250,7 @@ pub enum ToolSet {
 }
 
 impl ToolSet {
+    /// Returns the tools exposed by this tool set.
     pub fn allowed_tools(&self) -> &'static [Tool] {
         match self {
             Self::Default => &[
@@ -274,6 +280,7 @@ impl ToolSet {
         self.allowed_tools().contains(&tool)
     }
 
+    /// Returns the human-readable instructions advertised for this tool set.
     fn instructions(&self) -> String {
         match self {
             Self::Default => "RHOKP MCP provides search access to Red Hat product documentation, \
@@ -289,8 +296,11 @@ impl ToolSet {
 /// MCP server that exposes RHOKP search tools backed by a Solr instance.
 #[derive(Clone)]
 pub struct MimcpServer {
+    /// Solr client used to service search and lookup tools.
     solr: Arc<SolrClient>,
+    /// Embedder used to produce query vectors for hybrid search.
     embedder: Arc<Embedder>,
+    /// Tool set exposed by this server instance.
     tool_set: ToolSet,
 }
 
@@ -304,6 +314,7 @@ impl MimcpServer {
         }
     }
 
+    /// Returns this server with its tool set replaced by the given `tool_set`.
     pub fn with_tool_set(mut self, tool_set: ToolSet) -> Self {
         self.tool_set = tool_set;
         self

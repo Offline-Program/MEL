@@ -174,10 +174,15 @@ fn render_products_fq(products: &[ProductVersions<'_>]) -> String {
 /// HTTP client for querying a Solr instance hosting the RHOKP `portal-rag` collection.
 #[derive(Clone)]
 pub struct SolrClient {
+    /// Shared HTTP client used for all Solr requests.
     http: Client,
+    /// URL of the `portal-rag` collection's `/select` handler.
     select_url: Url,
+    /// URL of the `portal-rag` collection's `/hybrid-search` handler.
     hybrid_url: Url,
+    /// URL of the `portal-rag` collection's `/admin/ping` health endpoint.
     health_url: Url,
+    /// URL of the lexical `portal` collection's `/select` handler.
     portal_select_url: Url,
 }
 
@@ -404,23 +409,32 @@ fn format_vector(vector: &[f32]) -> String {
 /// JSON payload sent to Solr endpoints.
 #[derive(Serialize)]
 struct SolrPayload {
+    /// The Solr query parameters.
     params: SolrParams,
 }
 
 /// Query parameters nested inside [`SolrPayload`].
 #[derive(Serialize)]
 struct SolrParams {
+    /// The query string (`q`).
     q: String,
+    /// Maximum number of rows to return (`rows`).
     rows: String,
+    /// Comma-separated list of fields to return (`fl`).
     fl: String,
+    /// Filter queries (`fq`), omitted from the payload when empty.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     fq: Vec<String>,
+    /// Starting offset for pagination (`start`).
     #[serde(skip_serializing_if = "Option::is_none")]
     start: Option<String>,
+    /// Sort order (`sort`).
     #[serde(skip_serializing_if = "Option::is_none")]
     sort: Option<String>,
+    /// Rerank directive (`rq`), used to enable the hybrid rerank query.
     #[serde(skip_serializing_if = "Option::is_none")]
     rq: Option<String>,
+    /// Rerank sub-query (`rqq`), the vector query matched by the rerank directive.
     #[serde(skip_serializing_if = "Option::is_none")]
     rqq: Option<String>,
 }
@@ -606,34 +620,47 @@ where
 /// may omit any field depending on the document and collection schema.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct SolrDoc {
+    /// RHOKP document identifier.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub doc_id: Option<String>,
+    /// Solr document identifier.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
+    /// Content type of the document (e.g. documentation, errata, CVE).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub content_type: Option<String>,
+    /// Title of the document.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
+    /// Products the document applies to.
     #[serde(
         default,
         deserialize_with = "deserialize_string_or_vec",
         skip_serializing_if = "Option::is_none"
     )]
     pub product: Option<Vec<String>>,
+    /// Product version the document applies to.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub product_version: Option<String>,
+    /// Category the document belongs to.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub category: Option<String>,
+    /// Matching chunk of text from the document.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub chunk: Option<String>,
+    /// Relevance score assigned by Solr.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub score: Option<f64>,
+    /// URL of the document on the online Red Hat portal.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub online_source_url: Option<String>,
+    /// Source path of the document within the knowledge base.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_path: Option<String>,
+    /// Headings identifying the chunk's location within the document.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub headings: Option<String>,
+    /// Pre-rerank relevance score, from Solr's `originalScore()` pseudo-field.
     #[serde(rename = "originalScore()", skip_serializing_if = "Option::is_none")]
     pub original_score: Option<f64>,
 }
