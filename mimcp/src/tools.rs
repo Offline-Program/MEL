@@ -14,6 +14,15 @@ use crate::portal::{
     PortalDoc, PortalQuery, PortalResponseBody, CVE_DETAIL_FL, CVE_SUMMARY_FL, ERRATA_DETAIL_FL,
     ERRATA_PACKAGES_FL, ERRATA_SUMMARY_FL, KIND_CVE, KIND_ERRATA,
 };
+use crate::product::definitions::list_lifecycle_definitions;
+use crate::product::records::list_products_summary;
+use crate::product::records::{
+    operator_summary, product_by_id_summary, GetOperatorsOutput, GetProductByIdOutput,
+    ListLifecycleDefinitionsOutput, ListProductTypesOutput, ListProductsOutput,
+    SearchProductsOutput,
+};
+use crate::product::search::search_products;
+use crate::product::ProductCatalog;
 use crate::records::{
     AdvisoriesByCveResult, AdvisorySummary, CveDetail, CveSummary, ErratumDetail, ErratumMetadata,
     ErratumResult, GetCveByIdOutput, GetErrataByIdOutput, LinkedAdvisory,
@@ -88,6 +97,23 @@ define_tools! {
     ListAdvisoriesByCve => "list_advisories_by_cve",
     /// Package payload of a known advisory.
     ListAdvisoryPackages => "list_advisory_packages",
+
+    // Product-lifecycle tools: offline reimplementations of the upstream Red Hat
+    // product MCP server's surface, backed by the bundled PLC catalog JSON.
+    // Names, inputs and outputs match upstream so clients written against it work
+    // unchanged.
+    /// Paginated product lifecycle catalog listing.
+    ListProducts => "list_products",
+    /// Ranked product search by name.
+    SearchProducts => "search_products",
+    /// Full product record by uuid.
+    GetProductById => "get_product_by_id",
+    /// Product records with operator-oriented version detail.
+    GetOperators => "get_operators",
+    /// Derived lifecycle phase glossary.
+    ListLifecycleDefinitions => "list_lifecycle_definitions",
+    /// Product category vocabulary.
+    ListProductTypes => "list_product_types",
 }
 
 impl Tool {
@@ -233,6 +259,45 @@ pub struct ListAdvisoryPackagesRequest {
     pub offset: u32,
 }
 
+/// Parameters for `list_products`.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct ListProductsRequest {
+    /// Maximum number of products to return; omit to return all from `offset`.
+    #[schemars(description = "Maximum number of products to return (omit for all)")]
+    #[serde(default)]
+    pub limit: Option<u32>,
+
+    /// Zero-based offset of the first product to return.
+    #[schemars(description = "Zero-based offset of the first product to return (default 0)")]
+    #[serde(default)]
+    pub offset: Option<u32>,
+}
+
+/// Parameters for `get_product_by_id`.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct GetProductByIdRequest {
+    /// The product uuid to look up.
+    #[schemars(description = "85d6fd30-4292-4293-9621-87040b383b04")]
+    pub id: String,
+}
+
+/// Parameters for `get_operators`.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct GetOperatorsRequest {
+    /// Maximum number of products to return; omit to return all.
+    #[schemars(description = "Maximum number of products to return (omit for all)")]
+    #[serde(default)]
+    pub first: Option<u32>,
+}
+
+/// Parameters for `search_products`.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SearchProductsRequest {
+    /// The product name (or alias) to search for.
+    #[schemars(description = "Red Hat Enterprise Linux")]
+    pub name: String,
+}
+
 /// Defines which tools an endpoint exposes via `list_tools`.
 ///
 /// Variants mirror the Lightforge MCP servers, one per server, so an endpoint
@@ -247,6 +312,8 @@ pub enum ToolSet {
     Default,
     /// The upstream-parity Red Hat security tool surface: CVEs and advisories.
     Security,
+    /// The upstream-parity Red Hat product-lifecycle tool surface.
+    Product,
 }
 
 impl ToolSet {
@@ -262,6 +329,12 @@ impl ToolSet {
                 Tool::GetErrataById,
                 Tool::ListAdvisoriesByCve,
                 Tool::ListAdvisoryPackages,
+                Tool::ListProducts,
+                Tool::SearchProducts,
+                Tool::GetProductById,
+                Tool::GetOperators,
+                Tool::ListLifecycleDefinitions,
+                Tool::ListProductTypes,
             ],
             Self::Security => &[
                 Tool::SearchCves,
@@ -271,6 +344,14 @@ impl ToolSet {
                 Tool::GetErrataById,
                 Tool::ListAdvisoriesByCve,
                 Tool::ListAdvisoryPackages,
+            ],
+            Self::Product => &[
+                Tool::ListProducts,
+                Tool::SearchProducts,
+                Tool::GetProductById,
+                Tool::GetOperators,
+                Tool::ListLifecycleDefinitions,
+                Tool::ListProductTypes,
             ],
         }
     }
@@ -289,6 +370,10 @@ impl ToolSet {
             Self::Security => "RHOKP MCP security endpoint. Offline search and retrieval of Red \
                  Hat CVE records and security advisories."
                 .to_owned(),
+            Self::Product => "RHOKP MCP product endpoint. Offline search and retrieval of Red Hat \
+                 product lifecycle data: catalog, versions, lifecycle phases, and product \
+                 categories."
+                .to_owned(),
         }
     }
 }
@@ -300,16 +385,24 @@ pub struct MimcpServer {
     solr: Arc<SolrClient>,
     /// Embedder used to produce query vectors for hybrid search.
     embedder: Arc<Embedder>,
+    /// Offline product lifecycle catalog backing the product tools.
+    catalog: Arc<ProductCatalog>,
     /// Tool set exposed by this server instance.
     tool_set: ToolSet,
 }
 
 impl MimcpServer {
-    /// Creates a new MCP server backed by the given Solr client and embedder.
-    pub fn new(solr: Arc<SolrClient>, embedder: Arc<Embedder>) -> Self {
+    /// Creates a new MCP server backed by the given Solr client, embedder, and
+    /// product catalog.
+    pub fn new(
+        solr: Arc<SolrClient>,
+        embedder: Arc<Embedder>,
+        catalog: Arc<ProductCatalog>,
+    ) -> Self {
         Self {
             solr,
             embedder,
+            catalog,
             tool_set: ToolSet::Default,
         }
     }
@@ -727,6 +820,183 @@ impl MimcpServer {
             req.offset,
         )))
     }
+
+    #[tool(
+        description = "Browse the Red Hat product lifecycle catalog with pagination. Use for \
+                       product discovery and catalog navigation - finding product IDs before \
+                       drilling into version or lifecycle detail with single-product tools.\n\n\
+                       Returns: product ID, name, former names, classification flags \
+                       (is_operator, is_layered_product), release cadence, package type, and \
+                       documentation link. Does not include version-level data or phase \
+                       dates.\n\n\
+                       Constraints: paginate with limit and offset. No server-side operator \
+                       filtering - check is_operator client-side.\n\n\
+                       Use instead:\n\
+                       - search_products - when searching by name for ranked product matches\n\
+                       - get_operators - operator products with full inline version details\n\
+                       - get_product_by_id - version and phase data once ID is known"
+    )]
+    async fn list_products(
+        &self,
+        Parameters(req): Parameters<ListProductsRequest>,
+    ) -> Result<Json<ListProductsOutput>, ErrorData> {
+        let offset = req.offset.unwrap_or(0) as usize;
+        let limit = req.limit.map(|l| l as usize).unwrap_or(usize::MAX);
+        let plc_products = self
+            .catalog
+            .products()
+            .iter()
+            .skip(offset)
+            .take(limit)
+            .map(list_products_summary)
+            .collect();
+        Ok(Json(ListProductsOutput {
+            plc_products: Some(plc_products),
+        }))
+    }
+
+    #[tool(
+        description = "Search Red Hat products by name. Returns ranked matches with \
+                       relevance_score. Check get_product_by_id description for known IDs - skip \
+                       this tool if listed.\n\n\
+                       Returns: matches with ID, canonical name, former_names, relevance_score. \
+                       Use the highest relevance_score match with get_product_by_id. Empty list \
+                       means not found - do not retry. Check former_names if name differs.\n\n\
+                       Strip version before passing name: remove standalone version tokens (e.g. \
+                       \"8\", \"4.14\", \"8-beta\") and pass only the product name. Known aliases \
+                       (e.g. rhel, ocp, aap) are resolved to canonical names automatically.\n\n\
+                       Constraints: name must be a recognized Red Hat product name or alias. Use \
+                       list_products to browse the catalog without a known name."
+    )]
+    async fn search_products(
+        &self,
+        Parameters(req): Parameters<SearchProductsRequest>,
+    ) -> Result<Json<SearchProductsOutput>, ErrorData> {
+        if req.name.trim().is_empty() {
+            return Err(ErrorData::invalid_params(
+                "name is required and cannot be empty",
+                None,
+            ));
+        }
+        let products = search_products(&self.catalog, &req.name);
+        Ok(Json(SearchProductsOutput { products }))
+    }
+
+    #[tool(
+        description = "Complete record for a single Red Hat product - identity, metadata, and all \
+                       version details in one call.\n\n\
+                       Input: product ID (use search_products if unknown).\n\n\
+                       Returns:\n\
+                       - Product: ID, name, former names, operator/layered-product flags, release \
+                       cadence, package type, and documentation link.\n\
+                       - Versions (per version): name, type, support tier, OpenShift \
+                       compatibility, final minor release, extra dependencies, and phase timeline \
+                       with dates and date formats. final minor release is the planned final \
+                       minor release, NOT the latest version.\n\n\
+                       To determine support status: compare version phase dates against today's \
+                       date; use tier for Premium/Standard/Self-Support classification.\n\n\
+                       Constraints: one product at a time. Returns null when no product matches \
+                       the ID.\n\n\
+                       Known Product IDs - call this tool directly:\n\
+                       Red Hat Enterprise Linux: 0579380b-2d8f-4cc9-9997-99ef12d3435c\n\
+                       Red Hat OpenShift Container Platform: 9bbc4758-50e0-4b73-89dc-2bae80f1d394\n\
+                       Red Hat Ansible Automation Platform: d2c793b1-dec9-42a9-b4bc-4295b66d7cfc\n\
+                       Red Hat OpenStack Platform: 6ecffb49-dafd-4335-a0de-c50839bc43b4\n\
+                       Red Hat Satellite Server: 30888478-ca60-4bfa-82d9-e247e530f755\n\
+                       Red Hat JBoss EAP: f08b73c1-395e-47a5-8482-0946e76526d4\n\
+                       Red Hat build of Keycloak: 5de41357-e188-4b5a-99ea-fad4ca57db78\n\
+                       Red Hat OpenShift Data Foundation: cc168755-3265-4da0-b436-0c23b7905396"
+    )]
+    async fn get_product_by_id(
+        &self,
+        Parameters(req): Parameters<GetProductByIdRequest>,
+    ) -> Result<Json<GetProductByIdOutput>, ErrorData> {
+        let plc_product = self.catalog.by_uuid(&req.id).map(product_by_id_summary);
+        Ok(Json(GetProductByIdOutput { plc_product }))
+    }
+
+    #[tool(
+        description = "Retrieve Red Hat operator products with full version and lifecycle \
+                       details. Use for operator catalog views - OpenShift/Kubernetes operators \
+                       with version phase timelines, compatibility, and release cadence in a \
+                       single call.\n\n\
+                       Returns: full product profiles with nested versions - ID, name, version \
+                       phase dates, OpenShift compatibility, tier, and release tracking. Filter \
+                       results client-side by is_operator == true; the API returns all product \
+                       types. Use `first` to limit result count.\n\n\
+                       Constraints: no server-side operator filtering; client-side filter \
+                       required. Does not include extra_dependencies or extra_header_value.\n\n\
+                       Use instead:\n\
+                       - list_products - full catalog with pagination, without version details\n\
+                       - get_product_by_id - single operator with complete product and version \
+                       details"
+    )]
+    async fn get_operators(
+        &self,
+        Parameters(req): Parameters<GetOperatorsRequest>,
+    ) -> Result<Json<GetOperatorsOutput>, ErrorData> {
+        // Faithful parity: the upstream `get_operators` query is
+        // `plc_products(first: $first)` with no `is_operator` filter and no
+        // transformer, so it returns the first N products of every type,
+        // unfiltered. Clients filter on `is_operator` themselves. This mirrors
+        // that quirk deliberately rather than "fixing" it.
+        let first = req.first.map(|f| f as usize).unwrap_or(usize::MAX);
+        let plc_products = self
+            .catalog
+            .products()
+            .iter()
+            .take(first)
+            .map(operator_summary)
+            .collect();
+        Ok(Json(GetOperatorsOutput {
+            plc_products: Some(plc_products),
+        }))
+    }
+
+    #[tool(
+        description = "Reference glossary of Red Hat lifecycle phase definitions. Use to explain \
+                       what a phase type means (e.g. Full Support, Maintenance Support, End of \
+                       Life).\n\n\
+                       Returns: one entry per phase with phase_type (identifier, e.g. \
+                       FULL_SUPPORT), display_name (human label, e.g. \"Full support\"), \
+                       definition_text (explanation of support scope for that phase; may be null \
+                       if not yet populated).\n\n\
+                       Constraints: no input required, returns all phases in one call. Do not use \
+                       for product-specific phase dates or current support status.\n\n\
+                       Use instead:\n\
+                       - get_product_by_id - product-specific phase dates and version status\n\
+                       - list_products - browsing the product catalog"
+    )]
+    async fn list_lifecycle_definitions(
+        &self,
+    ) -> Result<Json<ListLifecycleDefinitionsOutput>, ErrorData> {
+        Ok(Json(list_lifecycle_definitions(&self.catalog)))
+    }
+
+    #[tool(
+        description = "Retrieve valid product categories/types. Use when an agent needs the \
+                       category vocabulary (for example Cloud Computing, Runtimes) without \
+                       resolving a specific product.\n\n\
+                       Returns: sorted list of category strings (product_types).\n\n\
+                       Constraints: no input parameters. Call with an empty argument object. Does \
+                       not return products - only category strings.\n\n\
+                       Use instead:\n\
+                       - list_products - browse the product catalog\n\
+                       - search_products - resolve a known product name to ranked ID matches"
+    )]
+    async fn list_product_types(&self) -> Result<Json<ListProductTypesOutput>, ErrorData> {
+        let mut types: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        for web in self.catalog.web_products() {
+            for category in web.categories.iter().flatten() {
+                if !category.is_empty() {
+                    types.insert(category.clone());
+                }
+            }
+        }
+        Ok(Json(ListProductTypesOutput {
+            product_types: types.into_iter().collect(),
+        }))
+    }
 }
 
 #[cfg(test)]
@@ -790,7 +1060,7 @@ mod tests {
     #[test]
     fn toolset_subsets_are_subsets_of_default() {
         let all: HashSet<Tool> = ToolSet::Default.allowed_tools().iter().copied().collect();
-        for variant in [ToolSet::Default, ToolSet::Security] {
+        for variant in [ToolSet::Default, ToolSet::Security, ToolSet::Product] {
             for &tool in variant.allowed_tools() {
                 assert!(
                     all.contains(&tool),
@@ -815,6 +1085,12 @@ mod tests {
                 Tool::GetErrataById,
                 Tool::ListAdvisoriesByCve,
                 Tool::ListAdvisoryPackages,
+                Tool::ListProducts,
+                Tool::SearchProducts,
+                Tool::GetProductById,
+                Tool::GetOperators,
+                Tool::ListLifecycleDefinitions,
+                Tool::ListProductTypes,
             ]
         );
         assert_eq!(Tool::Search.name(), "search");
@@ -838,6 +1114,14 @@ mod tests {
             "get_errata_by_id",
             "list_advisories_by_cve",
             "list_advisory_packages",
+            // Online product-lifecycle MCP server (app/tools/tools.py). Note
+            // find_upgrade_path is disabled upstream, so it is not ported.
+            "list_products",
+            "search_products",
+            "get_product_by_id",
+            "get_operators",
+            "list_lifecycle_definitions",
+            "list_product_types",
         ]);
         for &tool in Tool::ALL {
             assert!(
@@ -867,6 +1151,28 @@ mod tests {
             "get_errata_by_id",
             "list_advisories_by_cve",
             "list_advisory_packages",
+        ]);
+        assert_eq!(names, expected);
+    }
+
+    /// The product endpoint must expose exactly the upstream Red Hat product MCP
+    /// server's live tool names (find_upgrade_path is disabled upstream and not
+    /// ported), so a client written against that server can be pointed at RHOKP
+    /// unchanged.
+    #[test]
+    fn product_toolset_matches_the_upstream_tool_surface() {
+        let names: HashSet<&str> = ToolSet::Product
+            .allowed_tools()
+            .iter()
+            .map(|t| t.name())
+            .collect();
+        let expected: HashSet<&str> = HashSet::from([
+            "list_products",
+            "search_products",
+            "get_product_by_id",
+            "get_operators",
+            "list_lifecycle_definitions",
+            "list_product_types",
         ]);
         assert_eq!(names, expected);
     }

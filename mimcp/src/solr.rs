@@ -103,6 +103,22 @@ impl From<Tool> for SolrFilter {
             | Tool::GetErrataById
             | Tool::ListAdvisoriesByCve
             | Tool::ListAdvisoryPackages => SolrFilter::Portal(None),
+            // The product-lifecycle tools are served entirely from the in-memory
+            // PLC catalog and never touch Solr, so this conversion is never
+            // invoked for them (their `#[tool]` methods do not call
+            // `run_search`). Keep the match exhaustive but fail loudly if one is
+            // ever wired through the Solr path by mistake.
+            Tool::ListProducts
+            | Tool::SearchProducts
+            | Tool::GetProductById
+            | Tool::GetOperators
+            | Tool::ListLifecycleDefinitions
+            | Tool::ListProductTypes => {
+                unreachable!(
+                    "product tool {:?} is catalog-backed and has no Solr index",
+                    tool
+                )
+            }
         }
     }
 }

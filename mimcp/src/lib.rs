@@ -7,6 +7,8 @@
 pub mod embed;
 pub mod packages;
 pub mod portal;
+/// Offline product-lifecycle MCP tools backed by bundled PLC catalog JSON.
+pub mod product;
 pub mod records;
 pub mod search_input;
 /// Client for querying the Solr indexes backing the RHOKP portal.
@@ -25,6 +27,7 @@ use tokio_util::sync::CancellationToken;
 use url::Url;
 
 use crate::embed::Embedder;
+use crate::product::ProductCatalog;
 use crate::solr::SolrClient;
 use crate::tools::{MimcpServer, ToolSet};
 
@@ -35,19 +38,25 @@ pub struct MimcpConfig {
     /// Directory containing the ONNX embedding model (`model.onnx`) and
     /// tokenizer (`tokenizer.json`).
     pub model_dir: PathBuf,
+    /// Directory containing the offline PLC product catalog: the shipped zola
+    /// static `product-life-cycles/api/v1` tree (holding `products/index.json`
+    /// and `web-products.json`).
+    pub product_data_dir: PathBuf,
     /// Token used to signal graceful shutdown of the MCP service.
     pub cancellation_token: CancellationToken,
 }
 
 /// Builds an axum `Router` with the MCP service mounted.
 ///
-/// Two endpoints are mounted: `/mcp`, exposing the hybrid `search` tool
-/// ([`ToolSet::Default`]), and `/mcp/security`, exposing the offline
-/// reimplementation of the online Red Hat security MCP server's seven tools
-/// ([`ToolSet::Security`]).
+/// Three endpoints are mounted: `/mcp`, exposing every tool ([`ToolSet::Default`]);
+/// `/mcp/security`, the offline reimplementation of the online Red Hat security
+/// MCP server's seven tools ([`ToolSet::Security`]); and `/mcp/product`, the
+/// offline reimplementation of the online Red Hat product-lifecycle MCP server's
+/// six tools ([`ToolSet::Product`]).
 ///
 /// Returns `Err` if the Solr endpoint URLs cannot be constructed, the Solr
-/// health check fails, or the embedding model cannot be loaded.
+/// health check fails, the embedding model cannot be loaded, or the product
+/// catalog cannot be loaded.
 pub async fn mcp_router(config: MimcpConfig) -> Result<axum::Router> {
     let solr = SolrClient::new(config.solr_url)?;
 
@@ -59,16 +68,29 @@ pub async fn mcp_router(config: MimcpConfig) -> Result<axum::Router> {
     let embedder = Arc::new(Embedder::new(&config.model_dir)?);
     tracing::info!("embedding model loaded");
 
+    tracing::info!("loading product catalog");
+    let catalog = Arc::new(ProductCatalog::load(&config.product_data_dir)?);
+    tracing::info!(
+        products = catalog.products().len(),
+        web_products = catalog.web_products().len(),
+        "product catalog loaded"
+    );
+
     let ct = config.cancellation_token;
 
     let make_service = |tool_set: ToolSet| {
         let solr = Arc::clone(&solr);
         let embedder = Arc::clone(&embedder);
+        let catalog = Arc::clone(&catalog);
         let ct = ct.child_token();
         StreamableHttpService::new(
             move || {
-                Ok(MimcpServer::new(Arc::clone(&solr), Arc::clone(&embedder))
-                    .with_tool_set(tool_set.clone()))
+                Ok(MimcpServer::new(
+                    Arc::clone(&solr),
+                    Arc::clone(&embedder),
+                    Arc::clone(&catalog),
+                )
+                .with_tool_set(tool_set.clone()))
             },
             LocalSessionManager::default().into(),
             // Stateless mode: each POST is self-contained, so no per-session
@@ -91,6 +113,9 @@ pub async fn mcp_router(config: MimcpConfig) -> Result<axum::Router> {
         // server's tool surface, so clients written against it can point here
         // unchanged.
         ("/mcp/security", ToolSet::Security),
+        // Offline reimplementation of the upstream Red Hat product-lifecycle MCP
+        // server's tool surface.
+        ("/mcp/product", ToolSet::Product),
     ];
 
     let mut router = axum::Router::new();

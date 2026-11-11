@@ -1,0 +1,206 @@
+{
+  "corpus": [
+    {
+      "uuid": "u-rhel",
+      "name": "Red Hat Enterprise Linux",
+      "alternateNames": [
+        "RHEL",
+        "Enterprise Linux"
+      ]
+    },
+    {
+      "uuid": "u-ocp",
+      "name": "Red Hat OpenShift Container Platform",
+      "alternateNames": [
+        "OpenShift",
+        "OCP"
+      ]
+    },
+    {
+      "uuid": "u-aap",
+      "name": "Red Hat Ansible Automation Platform",
+      "alternateNames": [
+        "Ansible",
+        "AAP"
+      ]
+    },
+    {
+      "uuid": "u-quay",
+      "name": "Red Hat Quay",
+      "alternateNames": [
+        "Quay"
+      ]
+    },
+    {
+      "uuid": "u-ceph",
+      "name": "Red Hat Ceph Storage",
+      "alternateNames": [
+        "Ceph"
+      ]
+    },
+    {
+      "uuid": "u-net",
+      "name": ".NET",
+      "alternateNames": [
+        ".Net Core"
+      ]
+    },
+    {
+      "uuid": "u-camel",
+      "name": "Red Hat build of Apache Camel for Spring Boot",
+      "alternateNames": []
+    }
+  ],
+  "queries": {
+    "rhel": [
+      {
+        "uuid": "u-rhel",
+        "name": "Red Hat Enterprise Linux",
+        "score": 2.220446049250313e-16,
+        "relevance": 1
+      }
+    ],
+    "RHEL": [
+      {
+        "uuid": "u-rhel",
+        "name": "Red Hat Enterprise Linux",
+        "score": 2.220446049250313e-16,
+        "relevance": 1
+      }
+    ],
+    "enterprise linux": [
+      {
+        "uuid": "u-rhel",
+        "name": "Red Hat Enterprise Linux",
+        "score": 1.1354005955315026e-12,
+        "relevance": 1
+      }
+    ],
+    "openshift": [
+      {
+        "uuid": "u-ocp",
+        "name": "Red Hat OpenShift Container Platform",
+        "score": 2.3216816767693357e-17,
+        "relevance": 1
+      }
+    ],
+    "ocp": [
+      {
+        "uuid": "u-ocp",
+        "name": "Red Hat OpenShift Container Platform",
+        "score": 7.401486830834377e-17,
+        "relevance": 1
+      }
+    ],
+    "ansible": [
+      {
+        "uuid": "u-aap",
+        "name": "Red Hat Ansible Automation Platform",
+        "score": 2.3216816767693357e-17,
+        "relevance": 1
+      }
+    ],
+    "ceph storage": [
+      {
+        "uuid": "u-ceph",
+        "name": "Red Hat Ceph Storage",
+        "score": 0.08,
+        "relevance": 0.92
+      }
+    ],
+    "quay": [
+      {
+        "uuid": "u-quay",
+        "name": "Red Hat Quay",
+        "score": 1.2039434005237699e-17,
+        "relevance": 1
+      }
+    ],
+    "camel": [],
+    "red hat quay": [
+      {
+        "uuid": "u-quay",
+        "name": "Red Hat Quay",
+        "score": 8.625653738780227e-19,
+        "relevance": 1
+      }
+    ],
+    "nonexistentxyz": [],
+    "red hat openshift container platform": [
+      {
+        "uuid": "u-ocp",
+        "name": "Red Hat OpenShift Container Platform",
+        "score": 1.0132522144801754e-14,
+        "relevance": 1
+      }
+    ]
+  },
+  "fields": [
+    {
+      "pattern": "rhel",
+      "text": "red hat enterprise linux",
+      "isMatch": false,
+      "score": 1
+    },
+    {
+      "pattern": "rhel",
+      "text": "rhel",
+      "isMatch": true,
+      "score": 0
+    },
+    {
+      "pattern": "ocp",
+      "text": "red hat openshift container platform",
+      "isMatch": false,
+      "score": 1
+    },
+    {
+      "pattern": "ocp",
+      "text": "ocp",
+      "isMatch": true,
+      "score": 0
+    },
+    {
+      "pattern": "openshift",
+      "text": "red hat openshift container platform",
+      "isMatch": true,
+      "score": 0.08
+    },
+    {
+      "pattern": "ceph storage",
+      "text": "red hat ceph storage",
+      "isMatch": true,
+      "score": 0.08
+    },
+    {
+      "pattern": "quay",
+      "text": "red hat quay",
+      "isMatch": true,
+      "score": 0.08
+    },
+    {
+      "pattern": "quay",
+      "text": "quay",
+      "isMatch": true,
+      "score": 0
+    },
+    {
+      "pattern": "camel",
+      "text": "red hat build of apache camel for spring boot",
+      "isMatch": true,
+      "score": 0.24
+    },
+    {
+      "pattern": "ansible",
+      "text": "ansible",
+      "isMatch": true,
+      "score": 0
+    },
+    {
+      "pattern": "xyz",
+      "text": "red hat enterprise linux",
+      "isMatch": false,
+      "score": 1
+    }
+  ]
+}

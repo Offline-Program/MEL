@@ -40,6 +40,15 @@ const BIND_ADDR: &str = "127.0.0.1:3001";
 /// image. Populated by Containerfile.main.
 const MODEL_DIR: &str = "/opt/models";
 
+/// Directory holding the offline PLC product catalog inside the final image:
+/// the shipped zola static `product-life-cycles/api/v1` tree (with
+/// `products/index.json` and `web-products.json`). Backs the product MCP tools.
+///
+/// NOTE: like [`MODEL_DIR`], this path is set by the (external) image build and
+/// must be confirmed against the Containerfile that lays down the zola static
+/// content. The catalog loader fails fast at startup if the files are absent.
+const PRODUCT_DATA_DIR: &str = "/opt/app-root/src/zola-project/static/product-life-cycles/api/v1";
+
 /// Maximum number of Solr readiness poll attempts before giving up.
 const SOLR_WAIT_ATTEMPTS: u32 = 60;
 
@@ -93,6 +102,7 @@ async fn run(ct: CancellationToken) -> Result<(), Box<dyn std::error::Error>> {
     let router = mcp_router(MimcpConfig {
         solr_url,
         model_dir: PathBuf::from(MODEL_DIR),
+        product_data_dir: PathBuf::from(PRODUCT_DATA_DIR),
         cancellation_token: ct.child_token(),
     })
     .await?;
