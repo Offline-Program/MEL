@@ -47,7 +47,7 @@ const MODEL_DIR: &str = "/opt/models";
 /// NOTE: like [`MODEL_DIR`], this path is set by the (external) image build and
 /// must be confirmed against the Containerfile that lays down the zola static
 /// content. The catalog loader fails fast at startup if the files are absent.
-const PRODUCT_DATA_DIR: &str = "/opt/app-root/src/zola-project/static/product-life-cycles/api/v1";
+const PRODUCT_DATA_DIR: &str = "/var/www/html/product-life-cycles/api/v1";
 
 /// Maximum number of Solr readiness poll attempts before giving up.
 const SOLR_WAIT_ATTEMPTS: u32 = 60;
