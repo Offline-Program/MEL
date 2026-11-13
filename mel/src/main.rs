@@ -35,7 +35,7 @@ use mel_libs::token_map::{InvalidTokenMap, TokenMap};
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 use std::{env, io};
@@ -52,7 +52,13 @@ const SOLR_PROTECTED_PATH: &str = "/opt/solr/server/solr/portal-protected";
 /// `portal` collection and the subscription-only `portal-protected` collection, so that search
 /// federates across public and protected content transparently.  Exported to the environment for
 /// `run-solr`, which forwards it as the `mimir.search.shards` JVM system property.
-const MIMIR_SEARCH_SHARDS: &str = "localhost:8983/solr/portal,localhost:8983/solr/portal-protected";
+///
+/// Must use the literal IPv4 address, not `localhost`: `run-solr` allow-lists shard hosts via
+/// `-Dsolr.security.allow.urls=127.0.0.1:8983`, and Solr matches the allow-list against the literal
+/// host:port of each shard URL — a `localhost` spelling is rejected with an error before any
+/// sub-request is sent.  (`localhost` may also resolve to ::1 first, while Solr binds IPv4 only.)
+/// Keep this spelling in sync with run-solr's allow-list.
+const MIMIR_SEARCH_SHARDS: &str = "127.0.0.1:8983/solr/portal,127.0.0.1:8983/solr/portal-protected";
 /// The path inside the final image to the tokens tsv file.  This file is created by MOE and copied
 /// into the image in Containerfile.main.
 const TOKENS_TSV_PATH: &str = "/opt/tokens";
@@ -66,6 +72,24 @@ const SOLR_READINESS_TIMEOUT: Duration = Duration::from_secs(120);
 const SOLR_READINESS_POLL_INTERVAL: Duration = Duration::from_secs(1);
 /// Per-probe socket timeout for a single Solr readiness request.
 const SOLR_PROBE_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// The `host:port` Apache httpd serves RHOKP on inside the container.  This is the port operators
+/// connect to from outside the container (it is mapped through unchanged), and the one reported in
+/// MEL's final startup message.
+const HTTPD_ADDR: &str = "127.0.0.1:8080";
+/// The maximum time to wait for httpd to accept connections before giving up on the final startup
+/// message.  Bounded so an httpd failure can't hold MEL back forever.
+const HTTPD_READINESS_TIMEOUT: Duration = Duration::from_secs(60);
+/// How long to wait between httpd readiness poll attempts.
+const HTTPD_READINESS_POLL_INTERVAL: Duration = Duration::from_secs(1);
+/// Per-probe connect timeout for a single httpd readiness check.
+const HTTPD_PROBE_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// The maximum time to wait for the MCP server to finish starting up before printing the final
+/// startup message without it.  Generous on purpose: the MCP server itself first waits up to two
+/// minutes for Solr and then loads the embedding model before it reports ready.
+#[cfg(feature = "mcp")]
+const MCP_READY_TIMEOUT: Duration = Duration::from_secs(180);
 
 /// The string form of the ACCESS_KEY passed in when launching Mimir.
 static ACCESS_KEY: OnceLock<Option<String>> = OnceLock::new();
@@ -107,6 +131,12 @@ fn main() {
     // search across both collections.
     let protected_available = dek.is_some() || !is_encrypted();
 
+    // If the image is encrypted but no ACCESS_KEY was provided, RHOKP launches in a limited state
+    // (Solutions and Articles are unavailable).  Capture that here, before `dek` is consumed
+    // below, so a missing-key notice can be printed alongside the startup message once httpd is
+    // listening.
+    let mak_missing = is_encrypted() && dek.is_none();
+
     // launch solr (in the background)
     start_solr(protected_available);
 
@@ -117,14 +147,37 @@ fn main() {
 
     // launch MCP server.
     #[cfg(feature = "mcp")]
-    let mcp_shutdown_handle = mcp::start();
+    let mcp_handle = mcp::start();
 
-    // launch httpd, with optional dek - blocks until httpd exits
-    let httpd_result = start_httpd(dek);
+    // Solr's cores are up (awaited above); wait for the MCP server and httpd to finish starting,
+    // then tell the operator RHOKP is ready.  Both waits are bounded so a service that never
+    // comes up produces a warning instead of a hang.
+    #[cfg(feature = "mcp")]
+    if let Err(reason) = mcp_handle.wait_ready(MCP_READY_TIMEOUT) {
+        eprintln!(
+            "Warning: the MCP server did not finish starting up ({reason}); the /mcp endpoint may be unavailable."
+        );
+    }
+
+    // Now that Solr and MCP are ready; launch httpd, with optional dek.
+    let mut httpd = match spawn_httpd(dek) {
+        Ok(child) => child,
+        Err(err) => handle_error(err),
+    };
+
+    if wait_for_httpd_ready(&mut httpd) {
+        if mak_missing {
+            missing_mak_notice();
+        }
+        eprintln!("RHOKP is listening on port 8080");
+    }
+
+    // block until httpd exits
+    let httpd_result = httpd.wait().map_err(|_e| MelError::HttpdProcessFailed);
 
     // httpd has exited - cancel the MCP server
     #[cfg(feature = "mcp")]
-    mcp_shutdown_handle.cancel();
+    mcp_handle.cancel();
     match httpd_result {
         Ok(_) => {}
         Err(err) => handle_error(err),
@@ -302,8 +355,9 @@ fn clean_up() {
     }
 }
 
-/// Start Apache httpd.  Returns Err if the process spawning fails for any reason.
-fn start_httpd(enc_input: Option<Dek>) -> Result<std::process::ExitStatus, MelError> {
+/// Spawn Apache httpd.  Returns the spawned child process, which the caller must later `wait()`
+/// on (blocking until httpd exits).  Returns Err if the process spawning fails for any reason.
+fn spawn_httpd(enc_input: Option<Dek>) -> Result<Child, MelError> {
     // Start HTTPD in the foreground
     let mut httpd_cmd = Command::new("run-httpd");
 
@@ -321,34 +375,21 @@ fn start_httpd(enc_input: Option<Dek>) -> Result<std::process::ExitStatus, MelEr
             .env("MIMIR_DEK", dek.0)
             .env("MIMIR_IV", iv().as_hex());
     } else if is_encrypted() && mak_missing {
+        // The missing-ACCESS_KEY notice is printed in main, right before the "RHOKP is listening"
+        // startup message.
         httpd_cmd.env("MIMIR_MISSING_ACCESS_KEY", "true");
-        missing_mak_slow_warn();
     }
 
     httpd_cmd
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
         .spawn()
-        .map_err(|_e| MelError::HttpdProcessFailed)?
-        .wait()
         .map_err(|_e| MelError::HttpdProcessFailed)
 }
 
-/// Print a missing MAK warning with remediation instructions, and a slow countdown before
-/// continuing.
-fn missing_mak_slow_warn() {
+/// Print a missing MAK warning with remediation instructions.
+fn missing_mak_notice() {
     eprintln!("Warning: Missing ACCESS_KEY; Please retrieve an ACCESS_KEY from https://access.redhat.com/offline/access and provide it in the ACCESS_KEY environment variable to enable Solutions and Articles (Red Hat Knowledge Base content). Access to other content types, such as CVEs, errata, product documentation, and search remain available without an access key.");
-    eprint!("Launching Red Hat Offline Knowledge Portal (without ACCESS_KEY) in ");
-
-    /// Number of seconds to delay launching Mimir if the image is encrypted and no ACCESS_KEY
-    /// was provided.  The delay gives the sysadmin time to read the message and serves as an
-    /// additional incentive to register an ACCESS_KEY.
-    const MISSING_MAK_LAUNCH_DELAY_SECS: u8 = 10;
-    for n in (1..=MISSING_MAK_LAUNCH_DELAY_SECS).rev() {
-        eprint!("{n}... ");
-        std::thread::sleep(Duration::from_secs(1));
-    }
-    eprintln!("launch.");
 }
 
 /// Launch solr in the background.  Errors will not be returned but will be printed to stderr.
@@ -420,8 +461,10 @@ fn wait_for_solr_ready(protected_available: bool) {
 /// loaded and its searcher is registered.  A connection error, timeout, or non-200 status (e.g. the
 /// 503 returned while the core is still loading) yields `false`.  Implemented with `std::net` so MEL
 /// takes on no HTTP-client dependency and relies on no external binary (curl/wget may be absent from
-/// the image).  The ping handler is used rather than `/select` because it does not self-distribute
-/// across shards, so it reports the readiness of exactly this one core.
+/// the image).  The ping handler runs its query through the core's default handler (`/select`),
+/// which would distribute it across shards whenever `mimir.search.shards` is set (ACCESS_KEY
+/// present); the empty `shards=` param in the request below suppresses that, so this probe reports
+/// the readiness of exactly this one core.
 fn solr_core_ready(core: &str) -> bool {
     let Ok(mut stream) = TcpStream::connect(SOLR_ADDR) else {
         return false;
@@ -430,7 +473,7 @@ fn solr_core_ready(core: &str) -> bool {
     let _ = stream.set_write_timeout(Some(SOLR_PROBE_TIMEOUT));
 
     let request = format!(
-        "GET /solr/{core}/admin/ping?wt=json HTTP/1.0\r\nHost: {SOLR_ADDR}\r\nConnection: close\r\n\r\n"
+        "GET /solr/{core}/admin/ping?wt=json&shards= HTTP/1.0\r\nHost: {SOLR_ADDR}\r\nConnection: close\r\n\r\n"
     );
     if stream.write_all(request.as_bytes()).is_err() {
         return false;
@@ -448,6 +491,50 @@ fn solr_core_ready(core: &str) -> bool {
         .lines()
         .next()
         .is_some_and(|status_line| status_line.contains(" 200 "))
+}
+
+/// Block until httpd accepts connections on [`HTTPD_ADDR`], httpd exits, or
+/// [`HTTPD_READINESS_TIMEOUT`] elapses.
+///
+/// Returns `true` once httpd is accepting connections (RHOKP is being served).  Returns `false`
+/// when httpd exited before listening (its own stderr output explains why) or when the timeout
+/// was reached (a warning is printed); the final startup message is skipped in both cases.  httpd
+/// itself keeps starting either way — the wait only gates the message, so a slow httpd can't hang
+/// MEL.
+fn wait_for_httpd_ready(httpd: &mut Child) -> bool {
+    let deadline = Instant::now() + HTTPD_READINESS_TIMEOUT;
+    loop {
+        if httpd_listening() {
+            return true;
+        }
+        match httpd.try_wait() {
+            // httpd exited before accepting connections - nothing left to wait for
+            Ok(Some(_)) => return false,
+            Ok(None) => {}
+            Err(_) => return false,
+        }
+        if Instant::now() >= deadline {
+            eprintln!(
+                "Warning: httpd was not accepting connections on {} within {}s; it may still be starting up.",
+                HTTPD_ADDR,
+                HTTPD_READINESS_TIMEOUT.as_secs()
+            );
+            return false;
+        }
+        std::thread::sleep(HTTPD_READINESS_POLL_INTERVAL);
+    }
+}
+
+/// Probe whether httpd is accepting connections on [`HTTPD_ADDR`].
+///
+/// A completed TCP connection means the socket is listening; no HTTP request is sent (the probe
+/// connection is closed again immediately, so it never reaches httpd's logs).  Implemented with
+/// `std::net` like [`solr_core_ready`] so MEL relies on no external binary.
+fn httpd_listening() -> bool {
+    let Ok(addr) = HTTPD_ADDR.parse::<std::net::SocketAddr>() else {
+        return false;
+    };
+    TcpStream::connect_timeout(&addr, HTTPD_PROBE_TIMEOUT).is_ok()
 }
 
 /// credits ascii art
