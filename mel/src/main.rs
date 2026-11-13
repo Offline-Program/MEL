@@ -473,8 +473,10 @@ fn wait_for_solr_ready(protected_available: bool) {
 /// loaded and its searcher is registered.  A connection error, timeout, or non-200 status (e.g. the
 /// 503 returned while the core is still loading) yields `false`.  Implemented with `std::net` so MEL
 /// takes on no HTTP-client dependency and relies on no external binary (curl/wget may be absent from
-/// the image).  The ping handler is used rather than `/select` because it does not self-distribute
-/// across shards, so it reports the readiness of exactly this one core.
+/// the image).  The ping handler runs its query through the core's default handler (`/select`),
+/// which would distribute it across shards whenever `mimir.search.shards` is set (ACCESS_KEY
+/// present); the empty `shards=` param in the request below suppresses that, so this probe reports
+/// the readiness of exactly this one core.
 fn solr_core_ready(core: &str) -> bool {
     let Ok(mut stream) = TcpStream::connect(SOLR_ADDR) else {
         return false;
@@ -483,7 +485,7 @@ fn solr_core_ready(core: &str) -> bool {
     let _ = stream.set_write_timeout(Some(SOLR_PROBE_TIMEOUT));
 
     let request = format!(
-        "GET /solr/{core}/admin/ping?wt=json HTTP/1.0\r\nHost: {SOLR_ADDR}\r\nConnection: close\r\n\r\n"
+        "GET /solr/{core}/admin/ping?wt=json&shards= HTTP/1.0\r\nHost: {SOLR_ADDR}\r\nConnection: close\r\n\r\n"
     );
     if stream.write_all(request.as_bytes()).is_err() {
         return false;
