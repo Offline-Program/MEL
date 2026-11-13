@@ -9,7 +9,7 @@
 #![cfg(feature = "real-solr")]
 
 use mimcp::embed::Embedder;
-use mimcp::solr::{PortalRagFilter, SolrClient};
+use mimcp::solr::{PortalRagFilter, ProductVersions, SolrClient};
 use url::Url;
 
 /// Directory holding the ONNX model and tokenizer, relative to this crate.
@@ -146,7 +146,10 @@ async fn hybrid_search_product_filter_ocp() {
             query,
             &vector,
             10,
-            &[PortalRagFilter::Product("openshift_container_platform")],
+            &[PortalRagFilter::Products(&[ProductVersions {
+                product: "openshift_container_platform",
+                versions: &[],
+            }])],
         )
         .await
         .expect("OCP product-filtered search should succeed");
@@ -161,11 +164,9 @@ async fn hybrid_search_product_filter_ocp() {
             .product
             .as_ref()
             .expect("product field should be present");
-        let product_arr = products.as_array().expect("product should be an array");
-        let slugs: Vec<&str> = product_arr.iter().filter_map(|v| v.as_str()).collect();
         assert!(
-            slugs.contains(&"openshift_container_platform"),
-            "every result must include openshift_container_platform in product, got: {slugs:?}"
+            products.iter().any(|p| p == "openshift_container_platform"),
+            "every result must include openshift_container_platform in product, got: {products:?}"
         );
     }
 }
@@ -182,7 +183,10 @@ async fn hybrid_search_product_filter_rhel() {
             query,
             &vector,
             10,
-            &[PortalRagFilter::Product("red_hat_enterprise_linux")],
+            &[PortalRagFilter::Products(&[ProductVersions {
+                product: "red_hat_enterprise_linux",
+                versions: &[],
+            }])],
         )
         .await
         .expect("RHEL product-filtered search should succeed");
@@ -197,11 +201,9 @@ async fn hybrid_search_product_filter_rhel() {
             .product
             .as_ref()
             .expect("product field should be present");
-        let product_arr = products.as_array().expect("product should be an array");
-        let slugs: Vec<&str> = product_arr.iter().filter_map(|v| v.as_str()).collect();
         assert!(
-            slugs.contains(&"red_hat_enterprise_linux"),
-            "every result must include red_hat_enterprise_linux in product, got: {slugs:?}"
+            products.iter().any(|p| p == "red_hat_enterprise_linux"),
+            "every result must include red_hat_enterprise_linux in product, got: {products:?}"
         );
     }
 }
@@ -218,10 +220,10 @@ async fn hybrid_search_product_and_version_ocp_4_20() {
             query,
             &vector,
             10,
-            &[
-                PortalRagFilter::Product("openshift_container_platform"),
-                PortalRagFilter::ProductVersion("4.20"),
-            ],
+            &[PortalRagFilter::Products(&[ProductVersions {
+                product: "openshift_container_platform",
+                versions: &["4.20".to_string()],
+            }])],
         )
         .await
         .expect("OCP 4.20 product+version search should succeed");
@@ -236,11 +238,9 @@ async fn hybrid_search_product_and_version_ocp_4_20() {
             .product
             .as_ref()
             .expect("product field should be present");
-        let product_arr = products.as_array().expect("product should be an array");
-        let slugs: Vec<&str> = product_arr.iter().filter_map(|v| v.as_str()).collect();
         assert!(
-            slugs.contains(&"openshift_container_platform"),
-            "product must include openshift_container_platform, got: {slugs:?}"
+            products.iter().any(|p| p == "openshift_container_platform"),
+            "product must include openshift_container_platform, got: {products:?}"
         );
         assert_eq!(
             doc.product_version.as_deref(),
@@ -263,10 +263,10 @@ async fn hybrid_search_product_and_version_rhel_10() {
             query,
             &vector,
             10,
-            &[
-                PortalRagFilter::Product("red_hat_enterprise_linux"),
-                PortalRagFilter::ProductVersion("10"),
-            ],
+            &[PortalRagFilter::Products(&[ProductVersions {
+                product: "red_hat_enterprise_linux",
+                versions: &["10".to_string()],
+            }])],
         )
         .await
         .expect("RHEL 10 product+version search should succeed");
@@ -281,11 +281,9 @@ async fn hybrid_search_product_and_version_rhel_10() {
             .product
             .as_ref()
             .expect("product field should be present");
-        let product_arr = products.as_array().expect("product should be an array");
-        let slugs: Vec<&str> = product_arr.iter().filter_map(|v| v.as_str()).collect();
         assert!(
-            slugs.contains(&"red_hat_enterprise_linux"),
-            "product must include red_hat_enterprise_linux, got: {slugs:?}"
+            products.iter().any(|p| p == "red_hat_enterprise_linux"),
+            "product must include red_hat_enterprise_linux, got: {products:?}"
         );
         assert_eq!(
             doc.product_version.as_deref(),
@@ -308,7 +306,10 @@ async fn hybrid_search_version_filter_narrows_product_results() {
             query,
             &vector,
             20,
-            &[PortalRagFilter::Product("openshift_container_platform")],
+            &[PortalRagFilter::Products(&[ProductVersions {
+                product: "openshift_container_platform",
+                versions: &[],
+            }])],
         )
         .await
         .expect("product-only search should succeed");
@@ -318,10 +319,10 @@ async fn hybrid_search_version_filter_narrows_product_results() {
             query,
             &vector,
             20,
-            &[
-                PortalRagFilter::Product("openshift_container_platform"),
-                PortalRagFilter::ProductVersion("4.20"),
-            ],
+            &[PortalRagFilter::Products(&[ProductVersions {
+                product: "openshift_container_platform",
+                versions: &["4.20".to_string()],
+            }])],
         )
         .await
         .expect("product+version search should succeed");

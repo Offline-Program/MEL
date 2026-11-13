@@ -84,9 +84,11 @@ fn default_rows() -> u32 {
 /// Parameters for the `search_lexical` MCP tool.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct LexicalSearchRequest {
+    /// Search query for Red Hat documentation, errata, CVEs, etc.
     #[schemars(description = "Search query for Red Hat documentation, errata, CVEs, etc.")]
     pub query: String,
 
+    /// Maximum number of results to return (1-20, default 5).
     #[schemars(description = "Maximum number of results to return (1-20, default 5)")]
     #[serde(default = "default_rows")]
     pub rows: u32,
@@ -96,12 +98,14 @@ pub struct LexicalSearchRequest {
 /// and, optionally, the versions of that product to narrow results to.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct ProductFilter {
+    /// Product slug to match exactly, e.g. "openshift_container_platform".
     #[schemars(
         description = "Product slug to match exactly, e.g. \"openshift_container_platform\". \
                        Matched exactly against the document's product field (no wildcards)."
     )]
     pub product: String,
 
+    /// Versions of this product to include, e.g. ["4.19", "4.20"].
     #[schemars(
         description = "Versions of this product to include, e.g. [\"4.19\", \"4.20\"]. \
                        Matched exactly against the document's product_version field and \
@@ -115,13 +119,17 @@ pub struct ProductFilter {
 /// Parameters for the `search` (hybrid) MCP tool.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct HybridSearchRequest {
+    /// Search query for Red Hat documentation, errata, CVEs, etc.
     #[schemars(description = "Search query for Red Hat documentation, errata, CVEs, etc.")]
     pub query: String,
 
+    /// Maximum number of results to return (1-20, default 5).
     #[schemars(description = "Maximum number of results to return (1-20, default 5)")]
     #[serde(default = "default_rows")]
     pub rows: u32,
 
+    /// Optional structured product filter restricting results to the listed
+    /// products (OR-combined).
     #[schemars(
         description = "Optional structured product filter restricting results to the listed \
                        products (OR-combined). Each entry names a product and, optionally, the \
@@ -135,9 +143,11 @@ pub struct HybridSearchRequest {
 /// Parameters for content-type-specific search tools.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct ContentSearchRequest {
+    /// Search query.
     #[schemars(description = "Search query")]
     pub query: String,
 
+    /// Maximum number of results to return (1-20, default 5).
     #[schemars(description = "Maximum number of results to return (1-20, default 5)")]
     #[serde(default = "default_rows")]
     pub rows: u32,
@@ -146,6 +156,7 @@ pub struct ContentSearchRequest {
 /// Parameters for document lookup by ID.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct GetByIdRequest {
+    /// Document identifier (e.g. CVE-2024-1234, RHSA-2024:1234).
     #[schemars(description = "Document identifier (e.g. CVE-2024-1234, RHSA-2024:1234)")]
     pub id: String,
 }
@@ -167,6 +178,7 @@ pub enum ToolSet {
 }
 
 impl ToolSet {
+    /// The list of tools this tool set exposes via `list_tools`.
     pub fn allowed_tools(&self) -> &'static [Tool] {
         match self {
             Self::Default => &[Tool::Search],
@@ -193,6 +205,7 @@ impl ToolSet {
         self.allowed_tools().contains(&tool)
     }
 
+    /// Server instructions advertised to MCP clients for this tool set.
     fn instructions(&self) -> String {
         match self {
             Self::Default | Self::All => {
@@ -213,8 +226,11 @@ impl ToolSet {
 /// MCP server that exposes RHOKP search tools backed by a Solr instance.
 #[derive(Clone)]
 pub struct MimcpServer {
+    /// Solr client used to execute searches.
     solr: Arc<SolrClient>,
+    /// Embedder used to vectorize hybrid search queries.
     embedder: Arc<Embedder>,
+    /// The set of tools this server exposes.
     tool_set: ToolSet,
 }
 
@@ -228,6 +244,7 @@ impl MimcpServer {
         }
     }
 
+    /// Builder-style method restricting the server to a specific [`ToolSet`].
     pub fn with_tool_set(mut self, tool_set: ToolSet) -> Self {
         self.tool_set = tool_set;
         self
@@ -410,6 +427,89 @@ impl MimcpServer {
     // }
 }
 
+/// Builds the [`ServerConfig`] advertised by `list_tools`-capable servers.
+fn server_info(tool_set: &ToolSet) -> ServerConfig {
+    ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
+        .with_server_info(Implementation::new("mimcp", env!("CARGO_PKG_VERSION")))
+        .with_instructions(tool_set.instructions())
+}
+
+#[tool_handler]
+impl ServerHandler for MimcpServer {
+    fn get_info(&self) -> ServerConfig {
+        server_info(&self.tool_set)
+    }
+
+    async fn call_tool(
+        &self,
+        request: CallToolRequestParams,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResponse, rmcp::ErrorData> {
+        if tracing::enabled!(tracing::Level::TRACE) {
+            if let Ok(json) = serde_json::to_string_pretty(&request) {
+                tracing::trace!(direction = "in", method = "tools/call", "\n{json}");
+            }
+        }
+
+        // Enforce endpoint scoping: a tool that this endpoint's ToolSet does not
+        // expose must not be callable, even though the underlying tool_router
+        // knows how to dispatch every tool. Without this, list_tools would hide
+        // a tool while call_tool would still happily execute it.
+        match Tool::from_name(request.name.as_ref()) {
+            Some(tool) if self.tool_set.allows(tool) => {}
+            _ => {
+                return Err(ErrorData::invalid_params(
+                    format!("tool {:?} is not available on this endpoint", request.name),
+                    None,
+                ));
+            }
+        }
+
+        let tcc = ToolCallContext::new(self, request, context);
+        let result = Self::tool_router().call(tcc).await;
+        if tracing::enabled!(tracing::Level::TRACE) {
+            match &result {
+                Ok(CallToolResponse::Complete(r)) => {
+                    if let Ok(json) = serde_json::to_string_pretty(r) {
+                        tracing::trace!(direction = "out", method = "tools/call", "\n{json}");
+                    }
+                }
+                Ok(other) => {
+                    tracing::trace!(direction = "out", method = "tools/call", "{other:?}");
+                }
+                Err(e) => {
+                    if let Ok(json) = serde_json::to_string_pretty(e) {
+                        tracing::trace!(direction = "out", method = "tools/call", "\n{json}");
+                    }
+                }
+            }
+        }
+        result
+    }
+
+    async fn list_tools(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ListToolsResult, rmcp::ErrorData> {
+        let tools: Vec<rmcp::model::Tool> = Self::tool_router()
+            .list_all()
+            .into_iter()
+            .filter(|t| {
+                Tool::from_name(t.name.as_ref()).is_some_and(|tool| self.tool_set.allows(tool))
+            })
+            .collect();
+
+        let result = ListToolsResult::with_all_items(tools);
+        if tracing::enabled!(tracing::Level::TRACE) {
+            if let Ok(json) = serde_json::to_string_pretty(&result) {
+                tracing::trace!(direction = "out", method = "tools/list", "\n{json}");
+            }
+        }
+        Ok(result)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -516,88 +616,5 @@ mod tests {
         assert_eq!(req.products[0].versions, vec!["4.19", "4.20"]);
         assert_eq!(req.products[1].product, "rhel");
         assert!(req.products[1].versions.is_empty());
-    }
-}
-
-fn server_info(tool_set: &ToolSet) -> ServerInfo {
-    ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
-        .with_server_info(Implementation::new("mimcp", env!("CARGO_PKG_VERSION")))
-        .with_instructions(tool_set.instructions())
-}
-
-#[tool_handler]
-impl ServerHandler for MimcpServer {
-    fn get_info(&self) -> ServerInfo {
-        server_info(&self.tool_set)
-    }
-
-    async fn call_tool(
-        &self,
-        request: CallToolRequestParams,
-        context: RequestContext<RoleServer>,
-    ) -> Result<CallToolResult, rmcp::ErrorData> {
-        if tracing::enabled!(tracing::Level::TRACE) {
-            if let Ok(json) = serde_json::to_string_pretty(&request) {
-                tracing::trace!(direction = "in", method = "tools/call", "\n{json}");
-            }
-        }
-
-        // Enforce endpoint scoping: a tool that this endpoint's ToolSet does not
-        // expose must not be callable, even though the underlying tool_router
-        // knows how to dispatch every tool. Without this, list_tools would hide
-        // a tool while call_tool would still happily execute it.
-        match Tool::from_name(request.name.as_ref()) {
-            Some(tool) if self.tool_set.allows(tool) => {}
-            _ => {
-                return Err(ErrorData::invalid_params(
-                    format!("tool {:?} is not available on this endpoint", request.name),
-                    None,
-                ));
-            }
-        }
-
-        let tcc = ToolCallContext::new(self, request, context);
-        let result = Self::tool_router().call(tcc).await;
-        if tracing::enabled!(tracing::Level::TRACE) {
-            match &result {
-                Ok(r) => {
-                    if let Ok(json) = serde_json::to_string_pretty(r) {
-                        tracing::trace!(direction = "out", method = "tools/call", "\n{json}");
-                    }
-                }
-                Err(e) => {
-                    if let Ok(json) = serde_json::to_string_pretty(e) {
-                        tracing::trace!(direction = "out", method = "tools/call", "\n{json}");
-                    }
-                }
-            }
-        }
-        result
-    }
-
-    async fn list_tools(
-        &self,
-        _request: Option<PaginatedRequestParams>,
-        _context: RequestContext<RoleServer>,
-    ) -> Result<ListToolsResult, rmcp::ErrorData> {
-        let tools: Vec<rmcp::model::Tool> = Self::tool_router()
-            .list_all()
-            .into_iter()
-            .filter(|t| {
-                Tool::from_name(t.name.as_ref()).is_some_and(|tool| self.tool_set.allows(tool))
-            })
-            .collect();
-
-        let result = ListToolsResult {
-            tools,
-            meta: None,
-            next_cursor: None,
-        };
-        if tracing::enabled!(tracing::Level::TRACE) {
-            if let Ok(json) = serde_json::to_string_pretty(&result) {
-                tracing::trace!(direction = "out", method = "tools/list", "\n{json}");
-            }
-        }
-        Ok(result)
     }
 }

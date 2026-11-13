@@ -170,9 +170,13 @@ fn render_products_fq(products: &[ProductVersions<'_>]) -> String {
 /// HTTP client for querying a Solr instance hosting the RHOKP `portal-rag` collection.
 #[derive(Clone)]
 pub struct SolrClient {
+    /// Shared HTTP client used for all Solr requests.
     http: Client,
+    /// Solr select endpoint used for lexical queries.
     select_url: Url,
+    /// Solr query endpoint used for hybrid (RAG) queries.
     hybrid_url: Url,
+    /// Solr health-check endpoint.
     health_url: Url,
 }
 
@@ -361,19 +365,26 @@ fn format_vector(vector: &[f32]) -> String {
 /// JSON payload sent to Solr endpoints.
 #[derive(Serialize)]
 struct SolrPayload {
+    /// Query parameters nested inside the payload.
     params: SolrParams,
 }
 
 /// Query parameters nested inside [`SolrPayload`].
 #[derive(Serialize)]
 struct SolrParams {
+    /// The query string.
     q: String,
+    /// The number of rows to return, as a string (Solr JSON API format).
     rows: String,
+    /// Comma-separated list of fields to return.
     fl: String,
+    /// Additional filter queries (AND-combined).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     fq: Vec<String>,
+    /// Re-ranking query (lexical) for hybrid requests.
     #[serde(skip_serializing_if = "Option::is_none")]
     rq: Option<String>,
+    /// Re-ranking query (vector) for hybrid requests.
     #[serde(skip_serializing_if = "Option::is_none")]
     rqq: Option<String>,
 }
@@ -534,34 +545,47 @@ where
 /// may omit any field depending on the document and collection schema.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct SolrDoc {
+    /// Solr document ID.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub doc_id: Option<String>,
+    /// Unique document identifier (e.g. CVE-2024-1234).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
+    /// Content type of the document (e.g. "cve", "errata", "solution").
     #[serde(skip_serializing_if = "Option::is_none")]
     pub content_type: Option<String>,
+    /// Document title.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
+    /// Product(s) the document applies to.
     #[serde(
         default,
         deserialize_with = "deserialize_string_or_vec",
         skip_serializing_if = "Option::is_none"
     )]
     pub product: Option<Vec<String>>,
+    /// Product version the document applies to.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub product_version: Option<String>,
+    /// Document category.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub category: Option<String>,
+    /// RAG chunk text of the document.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub chunk: Option<String>,
+    /// Relevance score assigned by Solr.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub score: Option<f64>,
+    /// URL of the online source of the document.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub online_source_url: Option<String>,
+    /// Path of the document within the RHOKP site.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_path: Option<String>,
+    /// Section headings the chunk belongs to.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub headings: Option<String>,
+    /// Original (pre-RQ) relevance score.
     #[serde(rename = "originalScore()", skip_serializing_if = "Option::is_none")]
     pub original_score: Option<f64>,
 }

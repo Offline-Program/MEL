@@ -10,7 +10,7 @@ publish = false
 real-solr = []
 
 [dependencies]
-rmcp = { version = "2.2", features = ["server", "macros", "transport-streamable-http-server"] }
+rmcp = { version = "3.10", features = ["server", "macros", "transport-streamable-http-server"] }
 reqwest = { version = "0.13", features = ["json"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

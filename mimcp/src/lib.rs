@@ -3,8 +3,11 @@
 
 //! MiMCP - MCP server library for the Red Hat Offline Knowledge Portal (RHOKP).
 
+/// Embedding generation for the hybrid (RAG) search tools.
 pub mod embed;
+/// Solr client and query/filter types backing the MCP tools.
 pub mod solr;
+/// MCP tool definitions and the [`MimcpServer`] handler.
 pub mod tools;
 
 use std::path::PathBuf;
@@ -73,7 +76,14 @@ pub async fn mcp_router(config: MimcpConfig) -> Result<axum::Router> {
             // is appropriate for fast, synchronous operations with simple integrations.
             StreamableHttpServerConfig::default()
                 .with_cancellation_token(ct.clone())
-                .with_stateful_mode(false)
+                // rmcp 3.x renamed stateful_mode to legacy_session_mode; sessions
+                // only apply to pre-2026-07-28 protocol versions either way.
+                .with_legacy_session_mode(false)
+                // rmcp 3.x defaults to loopback-only Host validation; the RHOKP
+                // MCP server is reached via the container's hostname from other
+                // containers, so accept any Host (network access is governed by
+                // the container platform, as in rmcp 2.x).
+                .disable_allowed_hosts()
                 .with_json_response(true),
         )
     };
@@ -96,7 +106,7 @@ pub async fn mcp_router(config: MimcpConfig) -> Result<axum::Router> {
             .collect::<Vec<_>>()
             .join(", ");
         tracing::info!(path, tools, "mounting endpoint");
-        router = router.nest_service(*path, make_service(tool_set.clone()));
+        router = router.nest_service(path, make_service(tool_set.clone()));
     }
 
     Ok(router)

@@ -34,6 +34,8 @@ pub struct AESParam {
     hex: String,
 }
 
+/// Error returned when the system entropy source cannot provide random bytes
+/// for a randomly-generated [`AESParam`].
 pub struct NoEntropyAvailable;
 
 /// Error condition when creating an AESParam from a buffer.

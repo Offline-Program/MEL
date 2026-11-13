@@ -15,6 +15,7 @@ const MODEL_FILE: &str = "model.onnx";
 /// File name of the tokenizer configuration within the model directory.
 const TOKENIZER_FILE: &str = "tokenizer.json";
 
+/// An inference-ready tract model.
 type Model = RunnableModel<TypedFact, Box<dyn TypedOp>>;
 
 /// Generates vector embeddings from text using an ONNX model.
@@ -22,7 +23,9 @@ type Model = RunnableModel<TypedFact, Box<dyn TypedOp>>;
 /// Uses CLS pooling with L2 normalization, matching the behavior of
 /// `ibm-granite/granite-embedding-30m-english` and its successors.
 pub struct Embedder {
+    /// The inference-ready ONNX embedding model.
     model: Arc<Model>,
+    /// The tokenizer paired with the embedding model.
     tokenizer: Tokenizer,
 }
 
@@ -90,7 +93,7 @@ impl Embedder {
         ))?;
 
         let output = &outputs[0];
-        let view = output.try_as_plain()?;
+        let view = output.try_as_plain_ram()?;
         let embeddings = view.as_slice::<f32>()?;
 
         let shape = output.shape();
