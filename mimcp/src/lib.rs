@@ -101,7 +101,7 @@ pub async fn mcp_router(config: MimcpConfig) -> Result<axum::Router> {
             .map(|t| t.name())
             .collect::<Vec<_>>()
             .join(", ");
-        tracing::info!(path, tools, "mounting endpoint");
+        tracing::debug!(path, tools, "mounting endpoint");
         router = router.nest_service(*path, make_service(tool_set.clone()));
     }
 
