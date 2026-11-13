@@ -168,7 +168,7 @@ fn main() {
         );
     }
     if wait_for_httpd_ready(&mut httpd) {
-        eprintln!("RHOKP is listening on 8080");
+        eprintln!("RHOKP is listening on port 8080");
     }
 
     // block until httpd exits
