@@ -235,15 +235,15 @@ pub struct ListAdvisoryPackagesRequest {
 
 /// Defines which tools an endpoint exposes via `list_tools`.
 ///
-/// Variants mirror the Lightforge MCP servers, one per server, so an endpoint
-/// here stands in for the online server a client would otherwise point at.
-/// They are not content-type groupings: slicing the surface by `Cve` / `Docs`
-/// / `Errata` produced endpoints with no online counterpart, and was removed.
-/// Porting the product lifecycle server's tools means adding a `Product`
-/// variant, not a thematic one.
+/// The scoped variants mirror the Lightforge MCP servers, one per server, so
+/// an endpoint here stands in for the online server a client would otherwise
+/// point at. They are not content-type groupings: slicing the surface by
+/// `Cve` / `Docs` / `Errata` produced endpoints with no online counterpart,
+/// and was removed. Porting the product lifecycle server's tools means adding
+/// a `Product` variant, not a thematic one.
 #[derive(Clone)]
 pub enum ToolSet {
-    /// Hybrid search only, by default.  This default may change in the future.
+    /// Hybrid search only. This default may change in the future.
     Default,
     /// The upstream-parity Red Hat security tool surface: CVEs and advisories.
     Security,
@@ -253,16 +253,7 @@ impl ToolSet {
     /// Returns the tools exposed by this tool set.
     pub fn allowed_tools(&self) -> &'static [Tool] {
         match self {
-            Self::Default => &[
-                Tool::Search,
-                Tool::SearchCves,
-                Tool::GetCveById,
-                Tool::ListCveAffectedProducts,
-                Tool::SearchAdvisories,
-                Tool::GetErrataById,
-                Tool::ListAdvisoriesByCve,
-                Tool::ListAdvisoryPackages,
-            ],
+            Self::Default => &[Tool::Search],
             Self::Security => &[
                 Tool::SearchCves,
                 Tool::GetCveById,
@@ -770,55 +761,30 @@ mod tests {
         }
     }
 
-    /// Catches a new [`Tool`] variant being added without including it in the
-    /// default tool set, which would make the tool unreachable from the
-    /// default endpoint.
+    /// Catches a new [`Tool`] variant being added without including it in any
+    /// tool set, which would make the tool unreachable from every endpoint.
     #[test]
-    fn default_toolset_covers_every_enabled_tool() {
-        let allowed: HashSet<Tool> = ToolSet::Default.allowed_tools().iter().copied().collect();
+    fn every_tool_is_exposed_by_some_toolset() {
+        let exposed: HashSet<Tool> = [ToolSet::Default, ToolSet::Security]
+            .into_iter()
+            .flat_map(|variant| variant.allowed_tools().iter().copied())
+            .collect();
         for &tool in Tool::ALL {
             assert!(
-                allowed.contains(&tool),
-                "Tool::{tool:?} missing from ToolSet::Default"
+                exposed.contains(&tool),
+                "Tool::{tool:?} missing from every ToolSet variant"
             );
         }
     }
 
-    /// Prevents a scoped ToolSet variant from advertising a tool that the
-    /// default tool set doesn't include - which would mean the scoped endpoint
-    /// exposes something the "everything" endpoint hides.
+    /// The default endpoint exposes only the hybrid `search` tool; the wider
+    /// security surface lives on `/mcp/security` ([`ToolSet::Security`]).
     #[test]
-    fn toolset_subsets_are_subsets_of_default() {
-        let all: HashSet<Tool> = ToolSet::Default.allowed_tools().iter().copied().collect();
-        for variant in [ToolSet::Default, ToolSet::Security] {
-            for &tool in variant.allowed_tools() {
-                assert!(
-                    all.contains(&tool),
-                    "{tool:?} in a ToolSet variant but not in ToolSet::Default"
-                );
-            }
-        }
-    }
-
-    /// The default endpoint exposes every tool: the hybrid `search` tool plus
-    /// the offline security tool surface.
-    #[test]
-    fn default_toolset_exposes_every_tool() {
-        assert_eq!(
-            ToolSet::Default.allowed_tools(),
-            &[
-                Tool::Search,
-                Tool::SearchCves,
-                Tool::GetCveById,
-                Tool::ListCveAffectedProducts,
-                Tool::SearchAdvisories,
-                Tool::GetErrataById,
-                Tool::ListAdvisoriesByCve,
-                Tool::ListAdvisoryPackages,
-            ]
-        );
+    fn default_toolset_exposes_only_hybrid_search() {
+        assert_eq!(ToolSet::Default.allowed_tools(), &[Tool::Search]);
         assert_eq!(Tool::Search.name(), "search");
-        assert!(ToolSet::Default.allows(Tool::SearchCves));
+        assert!(ToolSet::Default.allows(Tool::Search));
+        assert!(!ToolSet::Default.allows(Tool::SearchCves));
     }
 
     /// The tool surface is closed: the hybrid `search` tool plus offline
