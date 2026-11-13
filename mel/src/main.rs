@@ -52,7 +52,13 @@ const SOLR_PROTECTED_PATH: &str = "/opt/solr/server/solr/portal-protected";
 /// `portal` collection and the subscription-only `portal-protected` collection, so that search
 /// federates across public and protected content transparently.  Exported to the environment for
 /// `run-solr`, which forwards it as the `mimir.search.shards` JVM system property.
-const MIMIR_SEARCH_SHARDS: &str = "localhost:8983/solr/portal,localhost:8983/solr/portal-protected";
+///
+/// Must use the literal IPv4 address, not `localhost`: `run-solr` allow-lists shard hosts via
+/// `-Dsolr.security.allow.urls=127.0.0.1:8983`, and Solr matches the allow-list against the literal
+/// host:port of each shard URL — a `localhost` spelling is rejected with an error before any
+/// sub-request is sent.  (`localhost` may also resolve to ::1 first, while Solr binds IPv4 only.)
+/// Keep this spelling in sync with run-solr's allow-list.
+const MIMIR_SEARCH_SHARDS: &str = "127.0.0.1:8983/solr/portal,127.0.0.1:8983/solr/portal-protected";
 /// The path inside the final image to the tokens tsv file.  This file is created by MOE and copied
 /// into the image in Containerfile.main.
 const TOKENS_TSV_PATH: &str = "/opt/tokens";
