@@ -131,14 +131,11 @@ fn main() {
     // search across both collections.
     let protected_available = dek.is_some() || !is_encrypted();
 
-    // If the image is encrypted but no ACCESS_KEY was provided, print the missing-key warning and
-    // count down before launching anything.  The countdown runs before Solr, the MCP server, and
-    // httpd are launched so that it blocks all other startup until it completes — their output
-    // used to interleave with the countdown when they were started first — and so it genuinely
-    // delays the portal's launch.
-    if is_encrypted() && dek.is_none() {
-        missing_mak_slow_warn();
-    }
+    // If the image is encrypted but no ACCESS_KEY was provided, RHOKP launches in a limited state
+    // (Solutions and Articles are unavailable).  Capture that here, before `dek` is consumed
+    // below, so a missing-key notice can be printed alongside the startup message once httpd is
+    // listening.
+    let mak_missing = is_encrypted() && dek.is_none();
 
     // launch solr (in the background)
     start_solr(protected_available);
@@ -169,6 +166,9 @@ fn main() {
     };
 
     if wait_for_httpd_ready(&mut httpd) {
+        if mak_missing {
+            missing_mak_notice();
+        }
         eprintln!("RHOKP is listening on port 8080");
     }
 
@@ -375,8 +375,8 @@ fn spawn_httpd(enc_input: Option<Dek>) -> Result<Child, MelError> {
             .env("MIMIR_DEK", dek.0)
             .env("MIMIR_IV", iv().as_hex());
     } else if is_encrypted() && mak_missing {
-        // The missing-ACCESS_KEY warning and countdown already ran in main, before any services
-        // were launched.
+        // The missing-ACCESS_KEY notice is printed in main, right before the "RHOKP is listening"
+        // startup message.
         httpd_cmd.env("MIMIR_MISSING_ACCESS_KEY", "true");
     }
 
@@ -387,22 +387,9 @@ fn spawn_httpd(enc_input: Option<Dek>) -> Result<Child, MelError> {
         .map_err(|_e| MelError::HttpdProcessFailed)
 }
 
-/// Print a missing MAK warning with remediation instructions, and a slow countdown before
-/// continuing.  Called before any services are launched, so the countdown blocks all other
-/// startup actions until it completes and its output stands alone on the console.
-fn missing_mak_slow_warn() {
+/// Print a missing MAK warning with remediation instructions.
+fn missing_mak_notice() {
     eprintln!("Warning: Missing ACCESS_KEY; Please retrieve an ACCESS_KEY from https://access.redhat.com/offline/access and provide it in the ACCESS_KEY environment variable to enable Solutions and Articles (Red Hat Knowledge Base content). Access to other content types, such as CVEs, errata, product documentation, and search remain available without an access key.");
-    eprint!("Launching Red Hat Offline Knowledge Portal (without ACCESS_KEY) in ");
-
-    /// Number of seconds to delay launching Mimir if the image is encrypted and no ACCESS_KEY
-    /// was provided.  The delay gives the sysadmin time to read the message and serves as an
-    /// additional incentive to register an ACCESS_KEY.
-    const MISSING_MAK_LAUNCH_DELAY_SECS: u8 = 10;
-    for n in (1..=MISSING_MAK_LAUNCH_DELAY_SECS).rev() {
-        eprint!("{n}... ");
-        std::thread::sleep(Duration::from_secs(1));
-    }
-    eprintln!("launch.");
 }
 
 /// Launch solr in the background.  Errors will not be returned but will be printed to stderr.
