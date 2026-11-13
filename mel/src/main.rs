@@ -152,12 +152,6 @@ fn main() {
     #[cfg(feature = "mcp")]
     let mcp_handle = mcp::start();
 
-    // launch httpd, with optional dek
-    let mut httpd = match spawn_httpd(dek) {
-        Ok(child) => child,
-        Err(err) => handle_error(err),
-    };
-
     // Solr's cores are up (awaited above); wait for the MCP server and httpd to finish starting,
     // then tell the operator RHOKP is ready.  Both waits are bounded so a service that never
     // comes up produces a warning instead of a hang.
@@ -167,6 +161,13 @@ fn main() {
             "Warning: the MCP server did not finish starting up ({reason}); the /mcp endpoint may be unavailable."
         );
     }
+
+    // Now that Solr and MCP are ready; launch httpd, with optional dek.
+    let mut httpd = match spawn_httpd(dek) {
+        Ok(child) => child,
+        Err(err) => handle_error(err),
+    };
+
     if wait_for_httpd_ready(&mut httpd) {
         eprintln!("RHOKP is listening on port 8080");
     }
