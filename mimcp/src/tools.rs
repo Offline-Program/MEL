@@ -1029,7 +1029,7 @@ mod tests {
     /// tool set, which would make the tool unreachable from every endpoint.
     #[test]
     fn every_tool_is_exposed_by_some_toolset() {
-        let exposed: HashSet<Tool> = [ToolSet::Default, ToolSet::Security]
+        let exposed: HashSet<Tool> = [ToolSet::Default, ToolSet::Security, ToolSet::Product]
             .into_iter()
             .flat_map(|variant| variant.allowed_tools().iter().copied())
             .collect();
