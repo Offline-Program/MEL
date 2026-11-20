@@ -92,7 +92,10 @@ pub fn start() -> McpHandle {
         });
     });
 
-    McpHandle { ct, ready: ready_rx }
+    McpHandle {
+        ct,
+        ready: ready_rx,
+    }
 }
 
 /// Handle to the background MCP server thread, used to await its startup and
