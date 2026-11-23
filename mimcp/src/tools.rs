@@ -984,6 +984,90 @@ impl MimcpServer {
     }
 }
 
+/// Build the server info payload, including this endpoint's tool instructions.
+fn server_info(tool_set: &ToolSet) -> ServerInfo {
+    ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
+        .with_server_info(Implementation::new("mimcp", env!("CARGO_PKG_VERSION")))
+        .with_instructions(tool_set.instructions())
+}
+
+#[tool_handler]
+impl ServerHandler for MimcpServer {
+    fn get_info(&self) -> ServerInfo {
+        server_info(&self.tool_set)
+    }
+
+    async fn call_tool(
+        &self,
+        request: CallToolRequestParams,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        if tracing::enabled!(tracing::Level::TRACE) {
+            if let Ok(json) = serde_json::to_string_pretty(&request) {
+                tracing::trace!(direction = "in", method = "tools/call", "\n{json}");
+            }
+        }
+
+        // Enforce endpoint scoping: a tool that this endpoint's ToolSet does not
+        // expose must not be callable, even though the underlying tool_router
+        // knows how to dispatch every tool. Without this, list_tools would hide
+        // a tool while call_tool would still happily execute it.
+        match Tool::from_name(request.name.as_ref()) {
+            Some(tool) if self.tool_set.allows(tool) => {}
+            _ => {
+                return Err(ErrorData::invalid_params(
+                    format!("tool {:?} is not available on this endpoint", request.name),
+                    None,
+                ));
+            }
+        }
+
+        let tcc = ToolCallContext::new(self, request, context);
+        let result = Self::tool_router().call(tcc).await;
+        if tracing::enabled!(tracing::Level::TRACE) {
+            match &result {
+                Ok(r) => {
+                    if let Ok(json) = serde_json::to_string_pretty(r) {
+                        tracing::trace!(direction = "out", method = "tools/call", "\n{json}");
+                    }
+                }
+                Err(e) => {
+                    if let Ok(json) = serde_json::to_string_pretty(e) {
+                        tracing::trace!(direction = "out", method = "tools/call", "\n{json}");
+                    }
+                }
+            }
+        }
+        result
+    }
+
+    async fn list_tools(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ListToolsResult, rmcp::ErrorData> {
+        let tools: Vec<rmcp::model::Tool> = Self::tool_router()
+            .list_all()
+            .into_iter()
+            .filter(|t| {
+                Tool::from_name(t.name.as_ref()).is_some_and(|tool| self.tool_set.allows(tool))
+            })
+            .collect();
+
+        let result = ListToolsResult {
+            tools,
+            meta: None,
+            next_cursor: None,
+        };
+        if tracing::enabled!(tracing::Level::TRACE) {
+            if let Ok(json) = serde_json::to_string_pretty(&result) {
+                tracing::trace!(direction = "out", method = "tools/list", "\n{json}");
+            }
+        }
+        Ok(result)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1029,7 +1113,7 @@ mod tests {
     /// tool set, which would make the tool unreachable from every endpoint.
     #[test]
     fn every_tool_is_exposed_by_some_toolset() {
-        let exposed: HashSet<Tool> = [ToolSet::Default, ToolSet::Security]
+        let exposed: HashSet<Tool> = [ToolSet::Default, ToolSet::Security, ToolSet::Product]
             .into_iter()
             .flat_map(|variant| variant.allowed_tools().iter().copied())
             .collect();
@@ -1219,88 +1303,5 @@ mod tests {
         assert_eq!(req.products[0].versions, vec!["4.19", "4.20"]);
         assert_eq!(req.products[1].product, "rhel");
         assert!(req.products[1].versions.is_empty());
-    }
-}
-
-fn server_info(tool_set: &ToolSet) -> ServerInfo {
-    ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
-        .with_server_info(Implementation::new("mimcp", env!("CARGO_PKG_VERSION")))
-        .with_instructions(tool_set.instructions())
-}
-
-#[tool_handler]
-impl ServerHandler for MimcpServer {
-    fn get_info(&self) -> ServerInfo {
-        server_info(&self.tool_set)
-    }
-
-    async fn call_tool(
-        &self,
-        request: CallToolRequestParams,
-        context: RequestContext<RoleServer>,
-    ) -> Result<CallToolResult, rmcp::ErrorData> {
-        if tracing::enabled!(tracing::Level::TRACE) {
-            if let Ok(json) = serde_json::to_string_pretty(&request) {
-                tracing::trace!(direction = "in", method = "tools/call", "\n{json}");
-            }
-        }
-
-        // Enforce endpoint scoping: a tool that this endpoint's ToolSet does not
-        // expose must not be callable, even though the underlying tool_router
-        // knows how to dispatch every tool. Without this, list_tools would hide
-        // a tool while call_tool would still happily execute it.
-        match Tool::from_name(request.name.as_ref()) {
-            Some(tool) if self.tool_set.allows(tool) => {}
-            _ => {
-                return Err(ErrorData::invalid_params(
-                    format!("tool {:?} is not available on this endpoint", request.name),
-                    None,
-                ));
-            }
-        }
-
-        let tcc = ToolCallContext::new(self, request, context);
-        let result = Self::tool_router().call(tcc).await;
-        if tracing::enabled!(tracing::Level::TRACE) {
-            match &result {
-                Ok(r) => {
-                    if let Ok(json) = serde_json::to_string_pretty(r) {
-                        tracing::trace!(direction = "out", method = "tools/call", "\n{json}");
-                    }
-                }
-                Err(e) => {
-                    if let Ok(json) = serde_json::to_string_pretty(e) {
-                        tracing::trace!(direction = "out", method = "tools/call", "\n{json}");
-                    }
-                }
-            }
-        }
-        result
-    }
-
-    async fn list_tools(
-        &self,
-        _request: Option<PaginatedRequestParams>,
-        _context: RequestContext<RoleServer>,
-    ) -> Result<ListToolsResult, rmcp::ErrorData> {
-        let tools: Vec<rmcp::model::Tool> = Self::tool_router()
-            .list_all()
-            .into_iter()
-            .filter(|t| {
-                Tool::from_name(t.name.as_ref()).is_some_and(|tool| self.tool_set.allows(tool))
-            })
-            .collect();
-
-        let result = ListToolsResult {
-            tools,
-            meta: None,
-            next_cursor: None,
-        };
-        if tracing::enabled!(tracing::Level::TRACE) {
-            if let Ok(json) = serde_json::to_string_pretty(&result) {
-                tracing::trace!(direction = "out", method = "tools/list", "\n{json}");
-            }
-        }
-        Ok(result)
     }
 }
